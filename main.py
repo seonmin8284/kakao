@@ -139,7 +139,9 @@ JUJAE_ENTRIES = [
     "마켓", "결제", "리뷰", "추천", "음성인식", "이미지 생성", "챗GPT", "메신저",
     "채팅", "협업", "일정", "CRM", "ERP", "워크플로우", "프로젝트 관리", "계약서",
     "보고서", "PDF 요약", "예약", "매칭", "미용실", "상담", "자가 진단", "습관 관리",
-    "행정", "민원", "정책", "배송", "택시", "물류", "탄소배출"
+    "행정", "민원", "정책", "배송", "택시", "물류", "탄소배출",
+    # 교육/발달 관련 키워드 추가
+    "지능", "경계선 지능", "특수교육", "발달", "인지", "읽기", "학습장애", "언어", "아동", "프로그램"
 ]
 
 JUJAE_SYNONYMS = [kw.lower() for kw in JUJAE_ENTRIES]  # 소문자 비교용 리스트
@@ -147,7 +149,7 @@ JUJAE_SYNONYMS = [kw.lower() for kw in JUJAE_ENTRIES]  # 소문자 비교용 리
 def match_similar_slot_lightweight(text: str, slot_type: str) -> str:
     """문자열 유사도 기반으로 가장 유사한 주제 또는 산출물을 반환"""
     candidates = SANCHUL_ENTRIES if slot_type == "산출물" else JUJAE_ENTRIES
-    matches = get_close_matches(text, candidates, n=1, cutoff=0.6)
+    matches = get_close_matches(text, candidates, n=1, cutoff=0.5)  # cutoff 값을 0.5로 낮춤
     return matches[0] if matches else ""
 
 def is_likely_output(text: str) -> bool:
@@ -331,7 +333,8 @@ async def kakao_webhook(request: Request, background_tasks: BackgroundTasks):
             topic_match = match_similar_slot_lightweight(utterance, "주제")
             if topic_match:
                 user_state["주제"] = topic_match
-            else:
+
+            if user_state["주제"] == "":
                 return JSONResponse(content={
                     "version": "2.0",
                     "template": {
