@@ -186,11 +186,22 @@ async def kakao_webhook(request: Request, background_tasks: BackgroundTasks):
         if utterance.startswith("견적 결과 확인:"):
             user_id = utterance.split("견적 결과 확인:")[-1].strip()
             return await get_result(user_id)
+        
+        # 파라미터 추출
+        action_params = body.get("action", {}).get("params", {})
+        topic = action_params.get("주제", "")
+        duration = action_params.get("기간", "")
             
         user_id = str(uuid.uuid4())
         
+        # 사용자의 요청 프롬프트 구성
+        user_input = f"""
+프로젝트 주제: {topic}
+예상 기간: {duration}
+        """.strip()
+        
         # GPT 요청 비동기 실행
-        background_tasks.add_task(process_gpt, user_id, utterance)
+        background_tasks.add_task(process_gpt, user_id, user_input)
         
         return JSONResponse(content={
             "version": "2.0",
