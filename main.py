@@ -224,7 +224,7 @@ async def kakao_webhook(request: Request, background_tasks: BackgroundTasks):
         
         # 기존 상태 없으면 초기화
         if user_id not in USER_SLOT_STATE:
-            USER_SLOT_STATE[user_id] = {"주제": "", "산출물": "", "기간": ""}
+            USER_SLOT_STATE[user_id] = {"주제": "", "산출물": "", "기간": "", "retry_count": 0}
             
         # 단어 기반 슬롯 추론
         if USER_SLOT_STATE[user_id]["주제"] == "" and any(keyword in utterance for keyword in ["플랫폼", "웹", "앱", "시스템", "사이트"]):
@@ -249,18 +249,43 @@ async def kakao_webhook(request: Request, background_tasks: BackgroundTasks):
         user_state = USER_SLOT_STATE[user_id]
         
         # 미입력된 슬롯 확인
-        missing_slots = [k for k, v in user_state.items() if not v and k != "last_requested_slot"]
+        missing_slots = [k for k, v in user_state.items() if not v and k != "last_requested_slot" and k != "retry_count"]
         
         if missing_slots:
+            # retry_count 증가
+            USER_SLOT_STATE[user_id]["retry_count"] += 1
+            
+            # 3회 이상 실패 시 전체 초기화
+            if USER_SLOT_STATE[user_id]["retry_count"] >= 3:
+                USER_SLOT_STATE.pop(user_id, None)
+                USER_INPUTS.pop(user_id, None)
+                GPT_RESPONSES.pop(user_id, None)
+                
+                return JSONResponse(content={
+                    "version": "2.0",
+                    "template": {
+                        "outputs": [{
+                            "simpleText": {
+                                "text": "⚠️ 여러 번 정보를 정확히 받지 못했어요. 처음부터 다시 진행해 주세요!"
+                            }
+                        }],
+                        "quickReplies": [{
+                            "messageText": "새로운 견적 문의",
+                            "action": "message",
+                            "label": "처음부터 다시"
+                        }]
+                    }
+                })
+            
+            # 아직 3회 미만이면 다음 슬롯 요청
             next_slot = missing_slots[0]
-            # 다음에 확인할 수 있도록 마지막으로 요청한 슬롯 저장
             USER_SLOT_STATE[user_id]["last_requested_slot"] = next_slot
             return JSONResponse(content={
                 "version": "2.0",
                 "template": {
                     "outputs": [{
                         "simpleText": {
-                            "text": f"'{next_slot}' 정보를 알려주세요!"
+                            "text": f"'{next_slot}' 정보를 알려주세요! ({USER_SLOT_STATE[user_id]['retry_count']}회 시도됨)"
                         }
                     }]
                 }
