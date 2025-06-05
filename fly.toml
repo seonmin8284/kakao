@@ -6,6 +6,8 @@ primary_region = "nrt"
 
 [env]
   PORT = "8080"
+  TRANSFORMERS_CACHE = "/app/cache"
+  SENTENCE_TRANSFORMERS_HOME = "/app/cache"
 
 [http_service]
   internal_port = 8080
