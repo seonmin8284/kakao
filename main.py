@@ -185,40 +185,41 @@ async def kakao_webhook(request: Request, background_tasks: BackgroundTasks):
                     user_state["산출물"] = parts[0]
                     user_state["주제"] = parts[1]
             else:  # 쉼표로 구분되지 않은 경우 개별 판단
-                if is_likely_topic(utterance):
+                if is_likely_topic(utterance) and user_state["주제"] == "":
                     user_state["주제"] = utterance
-                elif is_likely_output(utterance):
+                if is_likely_output(utterance) and user_state["산출물"] == "":
                     user_state["산출물"] = utterance
-                else:
-                    # 유사도 기반 매칭 시도
+                # 유사도 보완
+                if user_state["주제"] == "":
                     topic_match = match_similar_slot_lightweight(utterance, "주제")
-                    output_match = match_similar_slot_lightweight(utterance, "산출물")
                     if topic_match:
                         user_state["주제"] = topic_match
-                    elif output_match:
+                if user_state["산출물"] == "":
+                    output_match = match_similar_slot_lightweight(utterance, "산출물")
+                    if output_match:
                         user_state["산출물"] = output_match
         
         # 주제나 산출물 중 하나만 비어있는 경우
-        elif user_state["주제"] == "" or user_state["산출물"] == "":
-            if is_likely_topic(utterance) and user_state["주제"] == "":
-                user_state["주제"] = utterance
-            elif is_likely_output(utterance) and user_state["산출물"] == "":
-                user_state["산출물"] = utterance
-            else:
-                # 유사도 기반 매칭 시도
-                if user_state["주제"] == "":
-                    match = match_similar_slot_lightweight(utterance, "주제")
-                    if match:
-                        user_state["주제"] = match
-                elif user_state["산출물"] == "":
-                    match = match_similar_slot_lightweight(utterance, "산출물")
-                    if match:
-                        user_state["산출물"] = match
+        else:
+            if user_state["주제"] == "":
+                if is_likely_topic(utterance):
+                    user_state["주제"] = utterance
+                else:
+                    topic_match = match_similar_slot_lightweight(utterance, "주제")
+                    if topic_match:
+                        user_state["주제"] = topic_match
+            
+            if user_state["산출물"] == "":
+                if is_likely_output(utterance):
+                    user_state["산출물"] = utterance
+                else:
+                    output_match = match_similar_slot_lightweight(utterance, "산출물")
+                    if output_match:
+                        user_state["산출물"] = output_match
         
         # 주제와 산출물이 채워졌고 기간이 비어있는 경우
-        elif user_state["기간"] == "":
-            if any(keyword in utterance for keyword in ["일", "개월", "주", "달", "년"]):
-                user_state["기간"] = utterance
+        if user_state["기간"] == "" and any(keyword in utterance for keyword in ["일", "개월", "주", "달", "년"]):
+            user_state["기간"] = utterance
         
         # 상세 파라미터가 있는 경우 우선 적용
         for slot in ["주제", "산출물", "기간"]:
