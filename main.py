@@ -1,15 +1,14 @@
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from pydantic import BaseModel
 from fastapi.responses import JSONResponse
-import openai
 from typing import Optional, Dict, Any
 from sentence_transformers import SentenceTransformer, util
-import numpy as np
+import os
 
-# SentenceBERT 모델 로드
+# 모델 로딩
 model = SentenceTransformer('paraphrase-multilingual-MiniLM-L12-v2')
 
-# 서비스 카테고리 및 기능 정의
+# 서비스 및 프로젝트 데이터 (카테고리 기준 견적 산정)
 SERVICE_CATEGORIES = {
     "시각화_대시보드": {
         "기획_요구사항_정의": {
@@ -133,150 +132,19 @@ SERVICE_CATEGORIES = {
     }
 }
 
-def get_service_cost(category: str, service: str) -> int:
-    """서비스 카테고리와 세부 서비스에 대한 비용을 반환"""
-    try:
-        if category in SERVICE_CATEGORIES and service in SERVICE_CATEGORIES[category]:
-            return SERVICE_CATEGORIES[category][service]["cost"]
-    except:
-        return 0
-    return 0
+# 이하 기존 코드 동일
 
-def get_service_features(category: str, service: str) -> list:
-    """서비스 카테고리와 세부 서비스의 기능 목록을 반환"""
-    try:
-        if category in SERVICE_CATEGORIES and service in SERVICE_CATEGORIES[category]:
-            return SERVICE_CATEGORIES[category][service]["features"]
-    except:
-        return []
-    return []
+# 모델 로딩
+model = SentenceTransformer('paraphrase-multilingual-MiniLM-L12-v2')
 
-# 프로젝트 데이터
-PROJECT_TO_OUTPUTS = {
-    "고객센터 챗봇": ["AI 챗봇", "관리자 페이지"],
-    "뉴스 요약 시스템": ["리포트 자동화", "대시보드"],
-    "운세 서비스": ["AI 챗봇", "사용자 프론트", "데이터 수집", "백엔드"],
-    "병원 예약 시스템": ["웹사이트", "백엔드", "관리자 페이지"],
-    "전자상거래 플랫폼": ["웹사이트", "프론트엔드", "백엔드", "결제 시스템"],
-    "온라인 교육 플랫폼": ["프론트엔드", "백엔드", "동영상 업로드 시스템"],
-    "부동산 정보 포털": ["지도 연동", "데이터 수집", "시각화"],
-    "날씨 정보 서비스": ["API 연동", "시각화", "프론트엔드"],
-    "AI 면접 시스템": ["AI 챗봇", "녹화 기능", "관리자 페이지"],
-    "자동차 정비 예약 시스템": ["웹사이트", "예약 모듈", "관리자 페이지"],
-    "헬스케어 데이터 분석": ["데이터 수집", "정제", "리포트"],
-    "영화 추천 시스템": ["추천 알고리즘", "프론트엔드", "백엔드"],
-    "음악 스트리밍 앱": ["프론트엔드", "백엔드", "플레이어 UI"],
-    "AI 문서 요약기": ["AI 모델", "백엔드", "리포트 자동화"],
-    "가계부 앱": ["프론트엔드", "시각화", "백엔드"],
-    "설문조사 시스템": ["프론트엔드", "백엔드", "통계 리포트"],
-    "이력서 생성기": ["템플릿 엔진", "프론트엔드", "리포트 자동화"],
-    "영어 학습 챗봇": ["AI 챗봇", "프론트엔드", "데이터 수집"],
-    "고객 피드백 분석 시스템": ["텍스트 분석", "시각화", "리포트"],
-    "전자책 구독 플랫폼": ["결제 시스템", "뷰어", "프론트엔드"],
-    "전자도서관 관리 시스템": ["검색 기능", "대여 시스템", "관리자 페이지"],
-    "식단 추천 서비스": ["추천 알고리즘", "사용자 프론트", "데이터 수집"],
-    "SNS 분석 대시보드": ["API 연동", "시각화", "리포트 자동화"],
-    "중고거래 플랫폼": ["프론트엔드", "백엔드", "결제 시스템"],
-    "AI 음성비서": ["음성인식", "AI 챗봇", "백엔드"],
-    "스포츠 기록 앱": ["프론트엔드", "데이터 입력", "시각화"],
-    "교통정보 통합 플랫폼": ["API 연동", "지도 서비스", "시각화"],
-    "기업 인트라넷 포털": ["관리자 페이지", "프론트엔드", "문서 관리"],
-    "재무 보고 시스템": ["리포트 자동화", "KPI", "Power BI"],
-    "생산 공정 모니터링 시스템": ["시각화", "데이터 수집", "모니터링"],
-    "학원 스케줄 관리 앱": ["프론트엔드", "달력 기능", "백엔드"],
-    "전자투표 시스템": ["인증 기능", "백엔드", "프론트엔드"],
-    "AI 번역기": ["AI 모델", "프론트엔드", "백엔드"],
-    "재택근무 출퇴근 시스템": ["위치 기반", "프론트엔드", "백엔드"],
-    "AI 상담 챗봇": ["AI 챗봇", "상담 시나리오", "로그 저장"],
-    "문서 검색 엔진": ["검색 인덱싱", "백엔드", "프론트엔드"],
-    "보안 모니터링 대시보드": ["모니터링", "시각화", "알림 기능"],
-    "물류 추적 시스템": ["지도 연동", "백엔드", "프론트엔드"],
-    "AI 면접 평가 시스템": ["AI 챗봇", "영상 녹화", "리포트"],
-    "청구서 자동화 시스템": ["리포트 자동화", "PDF 생성기", "프론트엔드"],
-    "사내 게시판 시스템": ["프론트엔드", "글쓰기 기능", "관리자 페이지"],
-    "디지털 명함 서비스": ["프론트엔드", "QR 생성", "관리자 페이지"],
-    "AI 출결 관리 시스템": ["얼굴인식", "백엔드", "시각화"],
-    "세무 리포트 생성기": ["리포트", "정제", "PDF 출력"],
-    "HR 인재 추천 시스템": ["추천 알고리즘", "관리자 페이지", "리포트"],
-    "온라인 투표 플랫폼": ["프론트엔드", "투표 모듈", "백엔드"],
-    "마이데이터 기반 건강관리": ["데이터 수집", "시각화", "AI 분석"],
-    "기업 경쟁사 분석 도구": ["크롤링", "리포트", "대시보드"],
-    "상담 일정 예약 플랫폼": ["프론트엔드", "캘린더", "알림"],
-    "중소기업 재무 리포트 자동화": ["정제", "리포트 자동화", "시각화"],
-    "AI 자소서 코치": ["AI 챗봇", "자연어 분석", "프론트엔드"],
-    "전자계약 서비스": ["문서 생성", "서명 기능", "관리자 페이지"],
-    "AI 코딩 도우미": ["AI 모델", "코드 편집기", "프론트엔드"],
-    "온라인 출석 체크 시스템": ["QR 체크인", "백엔드", "시각화"],
-    "전자공시 분석 플랫폼": ["크롤링", "텍스트 분석", "리포트"],
-    "투자자 정보 제공 서비스": ["리포트", "대시보드", "알림"],
-    "스타트업 포트폴리오 공유 서비스": ["프론트엔드", "리포트", "PDF 출력"],
-    "앱 사용 데이터 분석 시스템": ["파이프라인", "시각화", "KPI"],
-    "경진대회 평가 시스템": ["프론트엔드", "점수 계산", "리포트"],
-    "AI 음성 상담 시스템": ["음성인식", "AI 챗봇", "대화 기록"],
-    "AI 이미지 분석 서비스": ["이미지 업로드", "AI 모델", "리포트"],
-    "라이브 커머스 플랫폼": ["스트리밍", "결제 시스템", "프론트엔드"],
-    "디지털 서명 서비스": ["문서 업로드", "서명 기능", "백엔드"],
-    "전자민원 처리 시스템": ["접수 기능", "백엔드", "리포트"],
-    "스타일 추천 서비스": ["추천 알고리즘", "프론트엔드", "데이터 수집"],
-    "지역 상권 분석 서비스": ["지도 시각화", "데이터 수집", "리포트"],
-    "투표 기반 커뮤니티 앱": ["프론트엔드", "투표 모듈", "백엔드"],
-    "AI 보도자료 생성기": ["AI 모델", "리포트", "PDF 출력"],
-    "요약형 뉴스 제공 앱": ["크롤링", "요약 모델", "프론트엔드"],
-    "채팅 기반 일정 공유 앱": ["프론트엔드", "대화 모듈", "캘린더 연동"],
-    "운동 기록 관리 앱": ["프론트엔드", "데이터 수집", "시각화"],
-    "리걸테크 문서 분석기": ["자연어 처리", "AI 모델", "프론트엔드"],
-    "부모-자녀 일정 공유 앱": ["프론트엔드", "캘린더", "알림 기능"],
-    "투자 시뮬레이터": ["프론트엔드", "계산 로직", "시각화"],
-    "직원 평가 시스템": ["리포트", "KPI", "관리자 페이지"],
-    "건강보험 자동 계산기": ["입력 폼", "계산기", "리포트"],
-    "명함 OCR 인식기": ["OCR 모델", "프론트엔드", "리포트"],
-    "스마트 팩토리 모니터링": ["센서 데이터", "시각화", "모니터링"],
-    "스마트팜 대시보드": ["IoT 연동", "시각화", "리포트"],
-    "공공데이터 분석 플랫폼": ["데이터 수집", "시각화", "KPI"],
-    "도서 추천 플랫폼": ["추천 모델", "프론트엔드", "관리자 페이지"],
-    "회의록 요약 시스템": ["음성 인식", "텍스트 요약", "리포트"],
-    "이력 자동 채우기 시스템": ["OCR", "백엔드", "리포트"],
-    "사진 기반 검색 엔진": ["이미지 분석", "검색 기능", "프론트엔드"],
-    "비대면 상담 플랫폼": ["AI 챗봇", "프론트엔드", "영상 기능"],
-    "멘토링 매칭 시스템": ["매칭 알고리즘", "프론트엔드", "알림"],
-    "마케팅 퍼널 분석 도구": ["KPI", "대시보드", "리포트"],
-    "AI 성적 분석기": ["리포트", "시각화", "AI 분석"],
-    "지출 분석 시스템": ["데이터 수집", "카테고리 분류", "시각화"],
-    "고객 이탈 예측 시스템": ["AI 모델", "백엔드", "리포트"],
-    "직원 복지 관리 포털": ["프론트엔드", "설문 기능", "리포트"],
-    "심리상담 AI 챗봇": ["AI 챗봇", "대화 저장", "프론트엔드"],
-    "음식 알레르기 필터링 앱": ["입력 기능", "추천 시스템", "프론트엔드"],
-    "지역 기반 퀘스트 앱": ["위치 기반", "프론트엔드", "백엔드"],
-    "기부 캠페인 플랫폼": ["프론트엔드", "결제 시스템", "리포트"],
-    "여행 일정 공유 앱": ["프론트엔드", "달력 기능", "지도 연동"]
-}
-
-# 산출물 특성 정의
-OUTPUT_TO_FEATURES = {
-    "웹사이트": {
-        "base_cost": 1000,
-        "base_duration": 30,
-        "features": {
-            "회원관리": {"cost": 300, "duration": 7},
-            "결제": {"cost": 500, "duration": 10},
-            "관리자페이지": {"cost": 400, "duration": 7}
-        }
-    },
-    "모바일앱": {
-        "base_cost": 1500,
-        "base_duration": 45,
-        "features": {
-            "푸시알림": {"cost": 200, "duration": 5},
-            "지도": {"cost": 300, "duration": 7},
-            "결제": {"cost": 500, "duration": 10}
-        }
-    }
-}
+# 서비스 및 프로젝트 데이터 생략 (이전 코드와 동일하므로 생략 가능)
+# SERVICE_CATEGORIES, PROJECT_TO_OUTPUTS, OUTPUT_TO_FEATURES 정의 부분을 그대로 둬야 합니다
 
 SIMILARITY_THRESHOLD = 0.75
 
 app = FastAPI()
 
+# Pydantic 스키마 정의
 class UserProperties(BaseModel):
     properties: Dict[str, Any] = {}
 
@@ -314,110 +182,81 @@ class KakaoRequest(BaseModel):
     bot: BotInfo
     action: ActionParams
 
+# 기능 유사도 매칭
 def find_similar_project(query: str) -> tuple[str, float]:
-    """가장 유사한 프로젝트와 유사도 점수를 반환"""
     query_embedding = model.encode(query)
     max_similarity = 0
     best_match = None
-    
     for project, features in PROJECT_TO_OUTPUTS.items():
-        # 프로젝트 이름과 기능을 결합하여 임베딩
-        project_text = f"{project} - {', '.join(features)}"
-        project_embedding = model.encode(project_text)
-        similarity = util.pytorch_cos_sim(query_embedding, project_embedding).item()
-        
+        text = f"{project} - {', '.join(features)}"
+        similarity = util.pytorch_cos_sim(query_embedding, model.encode(text)).item()
         if similarity > max_similarity:
             max_similarity = similarity
             best_match = project
-    
     return best_match, max_similarity
 
-def extract_features(query: str) -> list[str]:
-    """사용자 입력에서 필요한 기능들을 추출"""
-    # 실제 구현에서는 NER이나 키워드 매칭을 사용할 수 있습니다
-    features = []
-    for output_type in OUTPUT_TO_FEATURES.values():
-        for feature in output_type["features"]:
-            if feature in query.lower():
-                features.append(feature)
-    return features
-
-def calculate_estimate(output_type: str, features: list[str]) -> dict:
-    """견적 계산"""
-    if output_type not in OUTPUT_TO_FEATURES:
-        return None
-        
-    base = OUTPUT_TO_FEATURES[output_type]
-    total_cost = base["base_cost"]
-    total_duration = base["base_duration"]
-    
-    for feature in features:
-        if feature in base["features"]:
-            total_cost += base["features"][feature]["cost"]
-            total_duration += base["features"][feature]["duration"]
-            
-    return {
-        "cost": f"{total_cost}만원",
-        "duration": f"{total_duration}일"
-    }
+# 산출물 키워드 기반 추출
+def extract_outputs_from_text(text: str) -> list[str]:
+    matched = []
+    all_outputs = set(sum(PROJECT_TO_OUTPUTS.values(), []))
+    for output in all_outputs:
+        if output.lower().replace("_", "") in text.lower().replace(" ", ""):
+            matched.append(output)
+    return matched
 
 @app.post("/kakao/webhook")
 async def kakao_webhook(request: KakaoRequest):
     utterance = request.userRequest.utterance
-    user_id = request.userRequest.user.id
-    
-    # 1단계: 서비스 카테고리 매칭
+
+    # 서비스 카테고리 우선 매칭
     for category in SERVICE_CATEGORIES.keys():
         if category.replace("_", " ").lower() in utterance.lower():
             services = SERVICE_CATEGORIES[category]
-            total_cost = sum(service["cost"] for service in services.values() if isinstance(service, dict) and "cost" in service)
-            
-            response_text = f"[{category.replace('_', ' ')} 서비스 견적]\n\n"
-            response_text += "주요 단계:\n"
-            
-            for service_name, service_info in services.items():
-                if isinstance(service_info, dict) and "features" in service_info:
-                    response_text += f"\n▶ {service_name.replace('_', ' ')}\n"
-                    response_text += f"- 비용: {service_info['cost']:,}원\n"
-                    response_text += "- 주요 기능:\n"
-                    for feature in service_info["features"]:
-                        response_text += f"  · {feature}\n"
-            
+            total_cost = sum(s["cost"] for s in services.values() if isinstance(s, dict) and "cost" in s)
+            response_text = f"[{category.replace('_', ' ')} 서비스 견적]\n\n주요 단계:\n"
+            for name, info in services.items():
+                if isinstance(info, dict) and "features" in info:
+                    response_text += f"\n▶ {name.replace('_', ' ')}\n- 비용: {info['cost']:,}원\n- 주요 기능:\n"
+                    for f in info["features"]:
+                        response_text += f"  · {f}\n"
             response_text += f"\n총 견적: {total_cost:,}원"
             break
     else:
-        # 2단계: 프로젝트 매칭
-        similar_project, similarity = find_similar_project(utterance)
-        
-        if similarity >= SIMILARITY_THRESHOLD and similar_project:
-            features = PROJECT_TO_OUTPUTS[similar_project]
-            response_text = f"비슷한 프로젝트를 찾았습니다!\n\n"
-            response_text += f"프로젝트: {similar_project}\n"
-            response_text += f"필요한 기능:\n"
-            for feature in features:
-                response_text += f"- {feature}\n"
+        matched_outputs = extract_outputs_from_text(utterance)
+        if matched_outputs:
+            matched_projects = [
+                proj for proj, outs in PROJECT_TO_OUTPUTS.items()
+                if all(output in outs for output in matched_outputs)
+            ]
+            if matched_projects:
+                response_text = "입력하신 기능을 포함하는 프로젝트입니다:\n\n"
+                for proj in matched_projects[:3]:
+                    response_text += f"- {proj}\n"
+            else:
+                response_text = f"요청하신 기능({', '.join(matched_outputs)})을 포함하는 프로젝트를 찾지 못했습니다."
         else:
-            response_text = "다음 중 어떤 종류의 서비스를 찾으시나요?\n\n"
-            for category in SERVICE_CATEGORIES.keys():
-                response_text += f"- {category.replace('_', ' ')}\n"
+            # Fallback to BERT 유사도
+            similar_project, similarity = find_similar_project(utterance)
+            if similarity >= SIMILARITY_THRESHOLD:
+                features = PROJECT_TO_OUTPUTS[similar_project]
+                response_text = f"비슷한 프로젝트를 찾았습니다:\n\n프로젝트: {similar_project}\n기능:\n"
+                for f in features:
+                    response_text += f"- {f}\n"
+            else:
+                response_text = "다음 중 어떤 종류의 서비스를 찾으시나요?\n\n"
+                for cat in SERVICE_CATEGORIES:
+                    response_text += f"- {cat.replace('_', ' ')}\n"
 
-    response_json = {
+    return JSONResponse(content={
         "version": "2.0",
         "template": {
-            "outputs": [
-                {
-                    "simpleText": {
-                        "text": response_text
-                    }
-                }
-            ]
+            "outputs": [{
+                "simpleText": {"text": response_text}
+            }]
         }
-    }
-    return JSONResponse(content=response_json)
+    })
 
 if __name__ == "__main__":
     import uvicorn
-    import os
-    
     port = int(os.getenv("PORT", 8080))
     uvicorn.run("main:app", host="0.0.0.0", port=port, reload=False)
