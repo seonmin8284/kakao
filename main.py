@@ -1,9 +1,10 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, BackgroundTasks
 from pydantic import BaseModel
 from fastapi.responses import JSONResponse
 from typing import Optional, Dict, Any
 from sentence_transformers import SentenceTransformer, util
 import os
+from tasks import process_utterance_async, set_project_data, ANALYSIS_RESULTS
 
 # 모델 로딩
 model = SentenceTransformer('paraphrase-multilingual-MiniLM-L12-v2')
@@ -132,13 +133,16 @@ SERVICE_CATEGORIES = {
     }
 }
 
-# 이하 기존 코드 동일
+# 프로젝트 데이터 설정
+PROJECT_TO_OUTPUTS = {
+    "대시보드 개발": ["데이터 시각화", "실시간 모니터링", "KPI 대시보드"],
+    "AI 챗봇 구축": ["자연어 처리", "대화 시스템", "API 연동"],
+    "데이터 파이프라인": ["ETL 프로세스", "데이터 웨어하우스", "자동화 스크립트"],
+    "웹 플랫폼 개발": ["프론트엔드", "백엔드", "데이터베이스"]
+}
 
-# 모델 로딩
-model = SentenceTransformer('paraphrase-multilingual-MiniLM-L12-v2')
-
-# 서비스 및 프로젝트 데이터 생략 (이전 코드와 동일하므로 생략 가능)
-# SERVICE_CATEGORIES, PROJECT_TO_OUTPUTS, OUTPUT_TO_FEATURES 정의 부분을 그대로 둬야 합니다
+# 초기 데이터 설정
+set_project_data(PROJECT_TO_OUTPUTS, SERVICE_CATEGORIES)
 
 SIMILARITY_THRESHOLD = 0.75
 
@@ -205,56 +209,62 @@ def extract_outputs_from_text(text: str) -> list[str]:
     return matched
 
 @app.post("/kakao/webhook")
-async def kakao_webhook(request: KakaoRequest):
+async def kakao_webhook(request: KakaoRequest, background_tasks: BackgroundTasks):
     utterance = request.userRequest.utterance
-
-    # 서비스 카테고리 우선 매칭
-    for category in SERVICE_CATEGORIES.keys():
-        if category.replace("_", " ").lower() in utterance.lower():
-            services = SERVICE_CATEGORIES[category]
-            total_cost = sum(s["cost"] for s in services.values() if isinstance(s, dict) and "cost" in s)
-            response_text = f"[{category.replace('_', ' ')} 서비스 견적]\n\n주요 단계:\n"
-            for name, info in services.items():
-                if isinstance(info, dict) and "features" in info:
-                    response_text += f"\n▶ {name.replace('_', ' ')}\n- 비용: {info['cost']:,}원\n- 주요 기능:\n"
-                    for f in info["features"]:
-                        response_text += f"  · {f}\n"
-            response_text += f"\n총 견적: {total_cost:,}원"
-            break
-    else:
-        matched_outputs = extract_outputs_from_text(utterance)
-        if matched_outputs:
-            matched_projects = [
-                proj for proj, outs in PROJECT_TO_OUTPUTS.items()
-                if all(output in outs for output in matched_outputs)
-            ]
-            if matched_projects:
-                response_text = "입력하신 기능을 포함하는 프로젝트입니다:\n\n"
-                for proj in matched_projects[:3]:
-                    response_text += f"- {proj}\n"
-            else:
-                response_text = f"요청하신 기능({', '.join(matched_outputs)})을 포함하는 프로젝트를 찾지 못했습니다."
-        else:
-            # Fallback to BERT 유사도
-            similar_project, similarity = find_similar_project(utterance)
-            if similarity >= SIMILARITY_THRESHOLD:
-                features = PROJECT_TO_OUTPUTS[similar_project]
-                response_text = f"비슷한 프로젝트를 찾았습니다:\n\n프로젝트: {similar_project}\n기능:\n"
-                for f in features:
-                    response_text += f"- {f}\n"
-            else:
-                response_text = "다음 중 어떤 종류의 서비스를 찾으시나요?\n\n"
-                for cat in SERVICE_CATEGORIES:
-                    response_text += f"- {cat.replace('_', ' ')}\n"
-
-    return JSONResponse(content={
+    user_id = request.userRequest.user.id
+    
+    # 1. 즉시 응답
+    initial_response = {
         "version": "2.0",
         "template": {
-            "outputs": [{
-                "simpleText": {"text": response_text}
-            }]
+            "outputs": [
+                {
+                    "simpleText": {
+                        "text": "문의 주셔서 감사합니다. 최적의 견적을 산출 중입니다. 잠시만 기다려주세요! 🤖✨\n\n5초 이내 상세 견적이 제공됩니다."
+                    }
+                }
+            ],
+            "quickReplies": [
+                {
+                    "messageText": "견적 결과 확인",
+                    "action": "message",
+                    "label": "견적 결과 확인"
+                }
+            ]
         }
-    })
+    }
+    
+    # 2. 백그라운드 처리 시작
+    background_tasks.add_task(process_utterance_async, user_id, utterance)
+    
+    return JSONResponse(content=initial_response)
+
+@app.get("/kakao/result/{user_id}")
+async def get_analysis_result(user_id: str):
+    """분석 결과 조회 API"""
+    result = ANALYSIS_RESULTS.get(user_id, "아직 분석이 완료되지 않았습니다. 잠시 후 다시 시도해주세요.")
+    
+    response = {
+        "version": "2.0",
+        "template": {
+            "outputs": [
+                {
+                    "simpleText": {
+                        "text": result
+                    }
+                }
+            ],
+            "quickReplies": [
+                {
+                    "messageText": "새로운 견적 문의",
+                    "action": "message",
+                    "label": "새로운 견적 문의"
+                }
+            ]
+        }
+    }
+    
+    return JSONResponse(content=response)
 
 if __name__ == "__main__":
     import uvicorn
