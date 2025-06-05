@@ -181,6 +181,12 @@ async def kakao_webhook(request: Request, background_tasks: BackgroundTasks):
     try:
         body = await request.json()
         utterance = body.get("userRequest", {}).get("utterance", "")
+        
+        # 견적 결과 확인 요청 처리
+        if utterance.startswith("견적 결과 확인:"):
+            user_id = utterance.split("견적 결과 확인:")[-1].strip()
+            return await get_result(user_id)
+            
         user_id = str(uuid.uuid4())
         
         # GPT 요청 비동기 실행
@@ -195,7 +201,7 @@ async def kakao_webhook(request: Request, background_tasks: BackgroundTasks):
                     }
                 }],
                 "quickReplies": [{
-                    "messageText": "견적 결과 확인",
+                    "messageText": f"견적 결과 확인:{user_id}",
                     "action": "message",
                     "label": "견적 결과 확인"
                 }]
