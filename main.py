@@ -191,8 +191,9 @@ async def kakao_webhook(request: Request, background_tasks: BackgroundTasks):
         
         # 파라미터 추출
         action_params = body.get("action", {}).get("params", {})
-        topic = action_params.get("주제정의", "")
-        duration = action_params.get("기간설정", "")
+        topic = action_params.get("주제") or action_params.get("$주제", "")
+        duration = action_params.get("기간") or action_params.get("$기간", "")
+
             
         user_id = str(uuid.uuid4())
         
