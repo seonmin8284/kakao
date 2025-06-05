@@ -169,6 +169,16 @@ def is_valid_slot_answer(text: str) -> bool:
     invalid_keywords = ["없", "모르", "모름", "몰라", "글쎄", "무", "잘 몰라", "기억 안", "생각 안"]
     return not any(kw in lower for kw in invalid_keywords)
 
+def is_valid_period(text: str) -> bool:
+    """기간 입력의 유효성을 검사합니다."""
+    text = text.strip()
+    if not is_valid_slot_answer(text):  # 기본 유효성 검사
+        return False
+    # 숫자가 포함되어 있고, 단위 키워드가 있는지 확인
+    has_number = any(char.isdigit() for char in text)
+    has_unit = any(unit in text for unit in ["일", "개월", "달", "주", "년"])
+    return has_number and has_unit
+
 def build_prompt(user_input: str, service_categories: Dict[str, Any]) -> str:
     """사용자 입력과 서비스 카테고리를 기반으로 GPT 프롬프트를 생성합니다."""
     prompt = f"사용자의 요청:\n\"{user_input}\"\n\n"
@@ -324,7 +334,7 @@ async def kakao_webhook(request: Request, background_tasks: BackgroundTasks):
                         user_state["산출물"] = output_match
         
         # 주제와 산출물이 채워졌고 기간이 비어있는 경우
-        if user_state["기간"] == "" and any(keyword in utterance for keyword in ["일", "개월", "주", "달", "년"]):
+        if user_state["기간"] == "" and is_valid_period(utterance):
             user_state["기간"] = utterance
         
         # 상세 파라미터가 있는 경우 우선 적용
@@ -362,7 +372,11 @@ async def kakao_webhook(request: Request, background_tasks: BackgroundTasks):
         
         # 모든 슬롯이 채워진 경우에만 GPT 요청 처리
         if user_state["주제"] != "" and user_state["산출물"] != "" and user_state["기간"] != "":
-            user_input = f"{user_state['주제']}, {user_state['산출물']}, {user_state['기간']}"
+            # 중복 제거를 위해 리스트로 변환 후 다시 문자열로
+            user_input_parts = [user_state['주제'], user_state['산출물'], user_state['기간']]
+            user_input_parts = list(dict.fromkeys(user_input_parts))  # 중복 제거
+            user_input = ", ".join(user_input_parts)
+            
             USER_INPUTS[user_id] = user_input
             background_tasks.add_task(process_gpt, user_id, user_input)
             
