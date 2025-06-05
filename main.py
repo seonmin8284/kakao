@@ -126,7 +126,7 @@ SERVICE_CATEGORIES = {
 
 # 산출물 관련 키워드
 SANCHUL_ENTRIES = [
-    "웹", "챗봇", "플랫폼", "ETL", "시스템", "앱", "사이트", "MVP", "UI", "대시보드",
+    "웹", "웹사이트", "챗봇", "플랫폼", "ETL", "시스템", "앱", "사이트", "MVP", "UI", "대시보드",
     "API", "관리자 페이지", "리포트", "보고서", "자동화", "안드로이드", "IOS", "웹앱"
 ]
 
@@ -304,63 +304,41 @@ async def kakao_webhook(request: Request, background_tasks: BackgroundTasks):
                 }
             })
     
-        # 파라미터 추출 (상세 파라미터 우선, 없으면 일반 파라미터 사용)
-        params = body.get("action", {}).get("params", {})
-        detail_params = body.get("action", {}).get("detailParams", {})
-        
-        print("[DEBUG] params:", params)
-        print("[DEBUG] detail_params:", detail_params)
-        
         # 기존 상태 없으면 초기화
         if user_id not in USER_SLOT_STATE:
             USER_SLOT_STATE[user_id] = {"주제": "", "산출물": "", "기간": "", "retry_count": 0}
             
         user_state = USER_SLOT_STATE[user_id]
         
-        # 1. 주제 + 산출물 동시에 감지 가능성 우선 확인
-        if user_state["주제"] == "" and user_state["산출물"] == "":
-            # 예: "쇼핑몰 웹사이트" → 각 키워드로 나눠서 감지
-            tokens = utterance.replace(",", " ").replace("을", "").replace("를", "").split()
-            
-            # 주제 매칭
-            for token in tokens:
-                token = token.strip()
-                if user_state["주제"] == "" and is_likely_topic(token):
-                    user_state["주제"] = token
-            
-            # 산출물 다중 매칭
-            matched_outputs = []
-            for token in tokens:
-                token = token.strip().lower()
-                if is_likely_output(token):
-                    matched_outputs.append(token)
-            if matched_outputs:
-                user_state["산출물"] = ", ".join(sorted(set(matched_outputs)))
+        # 토큰화 및 전처리
+        tokens = utterance.replace(",", " ").replace("을", "").replace("를", "").split()
+        tokens = [t.strip().lower() for t in tokens]
         
-        # 2. 주제가 아직 없으면 주제부터 요청
+        # 주제가 비어 있으면 토큰에서 매칭 시도
         if user_state["주제"] == "":
-            topic_match = match_similar_slot_lightweight(utterance, "주제")
-            if topic_match:
-                user_state["주제"] = topic_match
-
+            for token in tokens:
+                if is_likely_topic(token):
+                    user_state["주제"] = token
+                    break
             if user_state["주제"] == "":
-                return JSONResponse(content={
-                    "version": "2.0",
-                    "template": {
-                        "outputs": [{
-                            "simpleText": {
-                                "text": "📝 프로젝트 주제를 알려주세요! (예: 쇼핑몰, 교육 플랫폼 등)"
-                            }
-                        }]
-                    }
-                })
+                topic_match = match_similar_slot_lightweight(utterance, "주제")
+                if topic_match:
+                    user_state["주제"] = topic_match
+                else:
+                    return JSONResponse(content={
+                        "version": "2.0",
+                        "template": {
+                            "outputs": [{
+                                "simpleText": {
+                                    "text": "📝 프로젝트 주제를 알려주세요! (예: 쇼핑몰, 교육 플랫폼 등)"
+                                }
+                            }]
+                        }
+                    })
         
-        # 3. 산출물이 없으면 산출물 요청
+        # 산출물이 비어 있으면 여러 토큰에서 추출
         if user_state["산출물"] == "":
-            # 여러 개 산출물 키워드가 있는 경우 먼저 추출 시도
-            matched_outputs = [
-                entry for entry in SANCHUL_SYNONYMS if entry in utterance.lower()
-            ]
+            matched_outputs = [entry for entry in SANCHUL_SYNONYMS if entry in utterance.lower()]
             if matched_outputs:
                 user_state["산출물"] = ", ".join(sorted(set(matched_outputs)))
             else:
