@@ -14,6 +14,7 @@ app = FastAPI()
 
 # 결과 저장소 (실제 운영에서는 DB나 Redis 사용)
 GPT_RESPONSES: Dict[str, str] = {}
+USER_INPUTS: Dict[str, str] = {}  # 사용자 입력 저장소
 
 # 서비스 카테고리 데이터
 SERVICE_CATEGORIES = {
@@ -172,6 +173,7 @@ def call_gpt_for_estimate(user_input: str) -> str:
 
 # 비동기 GPT 요청 처리
 async def process_gpt(user_id: str, user_input: str):
+    USER_INPUTS[user_id] = user_input
     GPT_RESPONSES[user_id] = "⏳ 요청을 처리 중입니다. 잠시만 기다려주세요..."
     GPT_RESPONSES[user_id] = call_gpt_for_estimate(user_input)
 
@@ -234,12 +236,14 @@ async def kakao_webhook(request: Request, background_tasks: BackgroundTasks):
 async def get_result(user_id: str):
     """결과 조회 엔드포인트"""
     response_text = GPT_RESPONSES.get(user_id, "❌ 존재하지 않는 요청 ID이거나 아직 처리 중입니다.")
+    user_input = USER_INPUTS.get(user_id, "입력 정보가 없습니다.")
+    
     return {
         "version": "2.0",
         "template": {
             "outputs": [{
                 "simpleText": {
-                    "text": response_text
+                    "text": f"{response_text}\n\n🗂️ 입력 정보:\n{user_input}"
                 }
             }],
             "quickReplies": [{
