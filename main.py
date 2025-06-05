@@ -179,9 +179,35 @@ def is_valid_period(text: str) -> bool:
     has_unit = any(unit in text for unit in ["일", "개월", "달", "주", "년"])
     return has_number and has_unit
 
-def build_prompt(user_input: str, service_categories: Dict[str, Any]) -> str:
+def infer_primary_category(topic: str, output: str) -> str:
+    """사용자 입력을 기반으로 가장 적합한 서비스 카테고리를 추론합니다."""
+    output = output.lower()
+    topic = topic.lower()
+    
+    # 웹 플랫폼 관련 키워드
+    if any(kw in output for kw in ["앱", "웹", "사이트", "플랫폼", "관리자", "ui", "페이지"]):
+        return "웹_플랫폼"
+    
+    # AI 챗봇 관련 키워드
+    elif any(kw in output for kw in ["챗봇", "ai", "대화", "질의응답"]) or \
+         any(kw in topic for kw in ["대화", "상담", "응답", "질문"]):
+        return "AI_챗봇"
+    
+    # 데이터/시각화 관련 키워드
+    elif any(kw in output for kw in ["대시보드", "시각화", "분석", "리포트"]) or \
+         any(kw in topic for kw in ["데이터", "분석", "통계", "현황"]):
+        return "시각화_대시보드"
+    
+    # 기본값은 웹 플랫폼
+    return "웹_플랫폼"
+
+def build_prompt(user_input: str, service_categories: Dict[str, Any], topic: str = "", output: str = "") -> str:
     """사용자 입력과 서비스 카테고리를 기반으로 GPT 프롬프트를 생성합니다."""
+    # 주요 서비스 카테고리 추론
+    primary_hint = infer_primary_category(topic, output)
+    
     prompt = f"사용자의 요청:\n\"{user_input}\"\n\n"
+    prompt += f"💡 사용자가 원하는 주요 서비스는 `{primary_hint}`일 가능성이 높습니다.\n\n"
     prompt += "우리 회사는 다음과 같은 서비스 카테고리를 제공합니다:\n"
 
     for category, steps in service_categories.items():
@@ -207,13 +233,13 @@ def build_prompt(user_input: str, service_categories: Dict[str, Any]) -> str:
     
     return prompt
 
-def call_gpt_for_estimate(user_input: str) -> str:
+def call_gpt_for_estimate(user_input: str, topic: str = "", output: str = "") -> str:
     """GPT API를 호출하여 견적 응답을 생성합니다."""
     try:
-        prompt = build_prompt(user_input, SERVICE_CATEGORIES)
+        prompt = build_prompt(user_input, SERVICE_CATEGORIES, topic, output)
         
         response = openai.ChatCompletion.create(
-            model="gpt-3.5-turbo",  # 또는 "gpt-3.5-turbo"
+            model="gpt-3.5-turbo",
             messages=[
                 {
                     "role": "system", 
@@ -229,10 +255,10 @@ def call_gpt_for_estimate(user_input: str) -> str:
         return f"⚠️ 죄송합니다. 견적 산출 중 오류가 발생했습니다.\n잠시 후 다시 시도해주세요.\n\n오류 내용: {str(e)}"
 
 # 비동기 GPT 요청 처리
-async def process_gpt(user_id: str, user_input: str):
+async def process_gpt(user_id: str, user_input: str, topic: str = "", output: str = ""):
     USER_INPUTS[user_id] = user_input
     GPT_RESPONSES[user_id] = "⏳ 요청을 처리 중입니다. 잠시만 기다려주세요..."
-    GPT_RESPONSES[user_id] = call_gpt_for_estimate(user_input)
+    GPT_RESPONSES[user_id] = call_gpt_for_estimate(user_input, topic, output)
 
 @app.post("/kakao/webhook")
 async def kakao_webhook(request: Request, background_tasks: BackgroundTasks):
@@ -365,7 +391,7 @@ async def kakao_webhook(request: Request, background_tasks: BackgroundTasks):
             user_input = ", ".join(user_input_parts)
             
             USER_INPUTS[user_id] = user_input
-            background_tasks.add_task(process_gpt, user_id, user_input)
+            background_tasks.add_task(process_gpt, user_id, user_input, user_state["주제"], user_state["산출물"])
             
             return JSONResponse(content={
                 "version": "2.0",
