@@ -212,10 +212,7 @@ async def kakao_webhook(request: Request, background_tasks: BackgroundTasks):
             "template": {
                 "outputs": [{
                     "simpleText": {
-                        "text": f"📝 요청을 접수했어요!\n몇 초 후 결과를 확인해주세요.\n
-                        주제: {topic}
-기간: {duration}
-\n👉 확인: /result/{user_id}"
+                        "text": f"📝 요청을 접수했어요!\n몇 초 후 결과를 확인해주세요.\n주제: {topic}기간: {duration}\n👉 확인: /result/{user_id}"
                     }
                 }],
                 "quickReplies": [{
