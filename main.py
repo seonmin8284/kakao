@@ -235,7 +235,7 @@ async def kakao_webhook(request: Request, background_tasks: BackgroundTasks):
                 "template": {
                     "outputs": [{
                         "simpleText": {
-                            "text": "📝 프로젝트 주제와 원하시는 산출물을 알려주세요!\n(예: 사주 플랫폼, AI 챗봇)"
+                            "text": "📝 프로젝트 주제와 원하시는 산출물을 알려주세요!"
                         }
                     }]
                 }
