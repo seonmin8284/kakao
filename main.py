@@ -191,6 +191,7 @@ async def kakao_webhook(request: Request, background_tasks: BackgroundTasks):
         
         # 파라미터 추출
         action_params = body.get("action", {}).get("params", {})
+        
         topic = action_params.get("주제") or action_params.get("$주제", "")
         duration = action_params.get("기간") or action_params.get("$기간", "")
 
@@ -211,7 +212,10 @@ async def kakao_webhook(request: Request, background_tasks: BackgroundTasks):
             "template": {
                 "outputs": [{
                     "simpleText": {
-                        "text": f"📝 요청을 접수했어요!\n몇 초 후 결과를 확인해주세요.\n\n👉 확인: /result/{user_id}"
+                        "text": f"📝 요청을 접수했어요!\n몇 초 후 결과를 확인해주세요.\n
+                        주제: {topic}
+기간: {duration}
+\n👉 확인: /result/{user_id}"
                     }
                 }],
                 "quickReplies": [{
