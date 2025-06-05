@@ -5,10 +5,13 @@ from typing import Optional, Dict, Any
 from sentence_transformers import SentenceTransformer, util
 import os
 from tasks import process_utterance_async, set_project_data, ANALYSIS_RESULTS
+import openai
+from dotenv import load_dotenv
 
-# 캐시 디렉토리 명시
-os.environ["TRANSFORMERS_CACHE"] = "/app/cache"
-os.environ["SENTENCE_TRANSFORMERS_HOME"] = "/app/cache"
+# 환경 변수 로드
+load_dotenv()
+openai.api_key = os.getenv("OPENAI_API_KEY")
+
 
 # 모델 로딩
 model = SentenceTransformer('paraphrase-multilingual-MiniLM-L12-v2')
@@ -212,37 +215,107 @@ def extract_outputs_from_text(text: str) -> list[str]:
             matched.append(output)
     return matched
 
-@app.post("/kakao/webhook")
-async def kakao_webhook(request: Request, background_tasks: BackgroundTasks):
-    body = await request.json()
-    utterance = body.get("userRequest", {}).get("utterance", "")
-    user_id = body.get("userRequest", {}).get("user", {}).get("id", "")
+def build_prompt(user_input: str, service_categories: Dict[str, Any]) -> str:
+    """사용자 입력과 서비스 카테고리를 기반으로 GPT 프롬프트를 생성합니다."""
+    prompt = f"사용자의 요청:\n\"{user_input}\"\n\n"
+    prompt += "우리 회사는 다음과 같은 서비스 카테고리를 제공합니다:\n"
+
+    for category, steps in service_categories.items():
+        prompt += f"\n📂 {category.replace('_', ' ')}\n"
+        for step, content in steps.items():
+            if isinstance(content, dict) and "features" in content:
+                cost = content.get("cost", 0)
+                features = " / ".join(content["features"])
+                prompt += f"  - {step.replace('_', ' ')}: {features} (비용: {cost:,}원)\n"
+            elif isinstance(content, dict):
+                for substep, subcontent in content.items():
+                    if "features" in subcontent:
+                        cost = subcontent.get("cost", 0)
+                        features = " / ".join(subcontent["features"])
+                        prompt += f"  - {step.replace('_', ' ')} > {substep}: {features} (비용: {cost:,}원)\n"
+
+    prompt += "\n다음 형식으로 답변해 주세요:\n"
+    prompt += "1. 추천 서비스: 사용자의 요구사항에 가장 적합한 카테고리\n"
+    prompt += "2. 필요한 단계: 각 단계별 주요 기능과 비용\n"
+    prompt += "3. 예상 기간: 전체 프로젝트 소요 기간\n"
+    prompt += "4. 총 견적: 모든 단계의 비용 합계\n"
+    prompt += "5. 추가 고려사항: 선택적으로 추가할 수 있는 기능이나 대안\n"
     
-    # 1. 즉시 응답
-    initial_response = {
-        "version": "2.0",
-        "template": {
-            "outputs": [
+    return prompt
+
+def call_gpt_for_estimate(user_input: str) -> str:
+    """GPT API를 호출하여 견적 응답을 생성합니다."""
+    try:
+        prompt = build_prompt(user_input, SERVICE_CATEGORIES)
+        
+        response = openai.ChatCompletion.create(
+            model="gpt-4",  # 또는 "gpt-3.5-turbo"
+            messages=[
                 {
-                    "simpleText": {
-                        "text": "문의 주셔서 감사합니다. 최적의 견적을 산출 중입니다. 잠시만 기다려주세요! 🤖✨"
-                    }
-                }
+                    "role": "system", 
+                    "content": "당신은 IT 프로젝트 견적 전문가입니다. 친절하고 전문적으로 상담해주세요. 이모지를 적절히 활용하여 답변하되, 형식은 반드시 지정된 대로 작성해주세요."
+                },
+                {"role": "user", "content": prompt}
             ],
-            "quickReplies": [
-                {
-                    "messageText": "견적 결과 확인",
-                    "action": "message",
-                    "label": "견적 결과 확인"
-                }
-            ]
+            temperature=0.7,
+            max_tokens=1500
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        return f"⚠️ 죄송합니다. 견적 산출 중 오류가 발생했습니다.\n잠시 후 다시 시도해주세요.\n\n오류 내용: {str(e)}"
+
+@app.post("/kakao/webhook")
+async def kakao_webhook(request: Request):
+    """카카오톡 웹훅 엔드포인트"""
+    try:
+        body = await request.json()
+        utterance = body.get("userRequest", {}).get("utterance", "")
+        
+        # GPT API로 응답 생성
+        gpt_reply = call_gpt_for_estimate(utterance)
+        
+        # 카카오톡 응답 포맷
+        response = {
+            "version": "2.0",
+            "template": {
+                "outputs": [
+                    {
+                        "simpleText": {
+                            "text": gpt_reply
+                        }
+                    }
+                ],
+                "quickReplies": [
+                    {
+                        "messageText": "새로운 견적 문의",
+                        "action": "message",
+                        "label": "새로운 견적 문의"
+                    }
+                ]
+            }
         }
-    }
-    
-    # 2. 백그라운드 처리 시작
-    background_tasks.add_task(process_utterance_async, user_id, utterance)
-    
-    return JSONResponse(content=initial_response)
+        
+        return JSONResponse(content=response)
+        
+    except Exception as e:
+        error_response = {
+            "version": "2.0",
+            "template": {
+                "outputs": [
+                    {
+                        "simpleText": {
+                            "text": f"⚠️ 죄송합니다. 요청 처리 중 오류가 발생했습니다.\n잠시 후 다시 시도해주세요.\n\n오류 내용: {str(e)}"
+                        }
+                    }
+                ]
+            }
+        }
+        return JSONResponse(content=error_response)
+
+@app.get("/health")
+async def health_check():
+    """서버 상태 확인 엔드포인트"""
+    return {"status": "healthy"}
 
 @app.get("/kakao/result/{user_id}")
 async def get_analysis_result(user_id: str):
