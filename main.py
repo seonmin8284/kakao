@@ -1,11 +1,19 @@
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, BackgroundTasks
 from fastapi.responses import JSONResponse
 import openai
 from dotenv import load_dotenv
 import os
 from typing import Dict, Any
+import uuid
+
+# 환경 변수 로드
+load_dotenv()
+openai.api_key = os.getenv("OPENAI_API_KEY")
 
 app = FastAPI()
+
+# 결과 저장소 (실제 운영에서는 DB나 Redis 사용)
+GPT_RESPONSES: Dict[str, str] = {}
 
 # 서비스 카테고리 데이터
 SERVICE_CATEGORIES = {
@@ -139,7 +147,6 @@ def build_prompt(user_input: str, service_categories: Dict[str, Any]) -> str:
     prompt += "4. 총 견적: 모든 단계의 비용 합계\n"
     prompt += "5. 추가 고려사항: 선택적으로 추가할 수 있는 기능이나 대안\n"
     
-    
     return prompt
 
 def call_gpt_for_estimate(user_input: str) -> str:
@@ -148,7 +155,7 @@ def call_gpt_for_estimate(user_input: str) -> str:
         prompt = build_prompt(user_input, SERVICE_CATEGORIES)
         
         response = openai.ChatCompletion.create(
-            model="gpt-4",  # 또는 "gpt-3.5-turbo"
+            model="gpt-3.5-turbo",  # 또는 "gpt-3.5-turbo"
             messages=[
                 {
                     "role": "system", 
@@ -157,61 +164,76 @@ def call_gpt_for_estimate(user_input: str) -> str:
                 {"role": "user", "content": prompt}
             ],
             temperature=0.7,
-            max_tokens=1500
+            max_tokens=700
         )
         return response.choices[0].message.content
     except Exception as e:
         return f"⚠️ 죄송합니다. 견적 산출 중 오류가 발생했습니다.\n잠시 후 다시 시도해주세요.\n\n오류 내용: {str(e)}"
 
+# 비동기 GPT 요청 처리
+async def process_gpt(user_id: str, user_input: str):
+    GPT_RESPONSES[user_id] = "⏳ 요청을 처리 중입니다. 잠시만 기다려주세요..."
+    GPT_RESPONSES[user_id] = call_gpt_for_estimate(user_input)
+
 @app.post("/kakao/webhook")
-async def kakao_webhook(request: Request):
+async def kakao_webhook(request: Request, background_tasks: BackgroundTasks):
     """카카오톡 웹훅 엔드포인트"""
     try:
         body = await request.json()
         utterance = body.get("userRequest", {}).get("utterance", "")
+        user_id = str(uuid.uuid4())
         
-        # GPT API로 응답 생성
-        gpt_reply = call_gpt_for_estimate(utterance)
+        # GPT 요청 비동기 실행
+        background_tasks.add_task(process_gpt, user_id, utterance)
         
-        # 카카오톡 응답 포맷
-        response = {
+        return JSONResponse(content={
             "version": "2.0",
             "template": {
-                "outputs": [
-                    {
-                        "simpleText": {
-                            "text": gpt_reply
-                        }
+                "outputs": [{
+                    "simpleText": {
+                        "text": f"📝 요청을 접수했어요!\n몇 초 후 결과를 확인해주세요.\n\n👉 확인: /result/{user_id}"
                     }
-                ],
-                "quickReplies": [
-                    {
-                        "messageText": "새로운 견적 문의",
-                        "action": "message",
-                        "label": "새로운 견적 문의"
-                    }
-                ]
+                }],
+                "quickReplies": [{
+                    "messageText": "견적 결과 확인",
+                    "action": "message",
+                    "label": "견적 결과 확인"
+                }]
             }
-        }
-        
-        return JSONResponse(content=response)
-        
+        })
     except Exception as e:
-        error_response = {
+        return JSONResponse(content={
             "version": "2.0",
             "template": {
-                "outputs": [
-                    {
-                        "simpleText": {
-                            "text": f"⚠️ 죄송합니다. 요청 처리 중 오류가 발생했습니다.\n잠시 후 다시 시도해주세요.\n\n오류 내용: {str(e)}"
-                        }
+                "outputs": [{
+                    "simpleText": {
+                        "text": f"⚠️ 요청 처리 중 오류가 발생했습니다.\n잠시 후 다시 시도해주세요.\n\n오류 내용: {str(e)}"
                     }
-                ]
+                }]
             }
+        })
+
+@app.get("/result/{user_id}")
+async def get_result(user_id: str):
+    """결과 조회 엔드포인트"""
+    response_text = GPT_RESPONSES.get(user_id, "❌ 존재하지 않는 요청 ID이거나 아직 처리 중입니다.")
+    return {
+        "version": "2.0",
+        "template": {
+            "outputs": [{
+                "simpleText": {
+                    "text": response_text
+                }
+            }],
+            "quickReplies": [{
+                "messageText": "새로운 견적 문의",
+                "action": "message",
+                "label": "새로운 견적 문의"
+            }]
         }
-        return JSONResponse(content=error_response)
+    }
 
 @app.get("/health")
 async def health_check():
-    """서버 상태 확인 엔드포인트"""
+    """헬스 체크 엔드포인트"""
     return {"status": "healthy"}
