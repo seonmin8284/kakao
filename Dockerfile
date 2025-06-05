@@ -17,11 +17,6 @@ RUN apt-get update && \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# 모델 사전 다운로드 및 검증 (최초 빌드 시만 실행됨)
-RUN mkdir -p /app/cache && \
-    echo "Preloading BERT model..." && \
-    python -c "from sentence_transformers import SentenceTransformer; model = SentenceTransformer('paraphrase-multilingual-MiniLM-L12-v2'); print('Model loaded successfully!')" && \
-    echo "Model preload complete!"
 
 # 나머지 소스 코드 복사
 COPY . .

@@ -7,4 +7,3 @@ sentence-transformers==2.2.2
 numpy
 typing-extensions==4.8.0
 torch==2.1.0
-transformers==4.34.0
