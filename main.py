@@ -171,94 +171,92 @@ async def kakao_webhook(request: Request, background_tasks: BackgroundTasks):
         if user_id not in USER_SLOT_STATE:
             USER_SLOT_STATE[user_id] = {"주제": "", "산출물": "", "기간": "", "retry_count": 0}
             
-        # 단어 기반 슬롯 추론 + 유사도 보완
-        if USER_SLOT_STATE[user_id]["산출물"] == "":
-            if is_likely_output(utterance):
-                USER_SLOT_STATE[user_id]["산출물"] = utterance
-            else:
-                match = match_similar_slot_lightweight(utterance, "산출물")
-                if match:
-                    USER_SLOT_STATE[user_id]["산출물"] = match
-
-        elif USER_SLOT_STATE[user_id]["주제"] == "":
-            if is_likely_topic(utterance):
-                USER_SLOT_STATE[user_id]["주제"] = utterance
-            else:
-                match = match_similar_slot_lightweight(utterance, "주제")
-                if match:
-                    USER_SLOT_STATE[user_id]["주제"] = match
-
-        elif USER_SLOT_STATE[user_id]["기간"] == "" and any(keyword in utterance for keyword in ["일", "개월", "주", "달", "년"]):
-            USER_SLOT_STATE[user_id]["기간"] = utterance
-            
-        # 파라미터 업데이트 (상세 파라미터 우선, 일반 파라미터, 발화 순)
-        for slot in ["주제", "산출물", "기간"]:
-            if slot in detail_params and detail_params[slot].get("origin"):
-                USER_SLOT_STATE[user_id][slot] = detail_params[slot]["origin"]
-            elif slot in params:
-                USER_SLOT_STATE[user_id][slot] = params.get(slot) or params.get(f"${slot}", "")
-            elif USER_SLOT_STATE[user_id][slot] == "":  # 아직도 비어있으면
-                # 이전에 해당 슬롯을 요청했었다면, 현재 발화를 해당 슬롯의 값으로 사용
-                last_requested_slot = USER_SLOT_STATE[user_id].get("last_requested_slot")
-                if last_requested_slot == slot and is_valid_slot_answer(utterance):
-                    USER_SLOT_STATE[user_id][slot] = utterance
-                
         user_state = USER_SLOT_STATE[user_id]
         
-        # 미입력된 슬롯 확인
-        missing_slots = [k for k, v in user_state.items() if not v and k != "last_requested_slot" and k != "retry_count"]
+        # 주제와 산출물이 모두 비어있는 경우 쉼표 구분 입력 처리
+        if user_state["주제"] == "" and user_state["산출물"] == "":
+            parts = [part.strip() for part in utterance.split(",")]
+            if len(parts) == 2:  # 쉼표로 구분된 두 부분이 있는 경우
+                # 첫 번째 부분이 주제인지 산출물인지 판단
+                if is_likely_topic(parts[0]) and is_likely_output(parts[1]):
+                    user_state["주제"] = parts[0]
+                    user_state["산출물"] = parts[1]
+                elif is_likely_output(parts[0]) and is_likely_topic(parts[1]):
+                    user_state["산출물"] = parts[0]
+                    user_state["주제"] = parts[1]
+            else:  # 쉼표로 구분되지 않은 경우 개별 판단
+                if is_likely_topic(utterance):
+                    user_state["주제"] = utterance
+                elif is_likely_output(utterance):
+                    user_state["산출물"] = utterance
+                else:
+                    # 유사도 기반 매칭 시도
+                    topic_match = match_similar_slot_lightweight(utterance, "주제")
+                    output_match = match_similar_slot_lightweight(utterance, "산출물")
+                    if topic_match:
+                        user_state["주제"] = topic_match
+                    elif output_match:
+                        user_state["산출물"] = output_match
         
-        if missing_slots:
-            USER_SLOT_STATE[user_id]["retry_count"] += 1
-            
-            # 3회 이상 실패 시 전체 초기화
-            if USER_SLOT_STATE[user_id]["retry_count"] >= 3:
-                USER_SLOT_STATE.pop(user_id, None)
-                USER_INPUTS.pop(user_id, None)
-                GPT_RESPONSES.pop(user_id, None)
-                
-                return JSONResponse(content={
-                    "version": "2.0",
-                    "template": {
-                        "outputs": [{
-                            "simpleText": {
-                                "text": "⚠️ 여러 번 정보를 정확히 받지 못했어요. 처음부터 다시 진행해 주세요!"
-                            }
-                        }],
-                        "quickReplies": [{
-                            "messageText": "새로운 견적 문의",
-                            "action": "message",
-                            "label": "처음부터 다시"
-                        }]
-                    }
-                })
-            
-            # 첫 요청 또는 일부만 입력된 경우 → 남은 항목 묶어서 물어보기
-            USER_SLOT_STATE[user_id]["last_requested_slot"] = missing_slots[0]
-            
-            # 질문 텍스트 생성
-            slot_labels = {"주제": "프로젝트 주제", "산출물": "원하시는 산출물", "기간": "예상 개발 기간"}
-            requested_fields = [slot_labels[slot] for slot in missing_slots]
-            field_text = "와 ".join(requested_fields) if len(requested_fields) == 2 else ", ".join(requested_fields)
-            
-            # 이전 입력이 유효하지 않은 경우 안내 메시지 추가
-            last_slot = USER_SLOT_STATE[user_id].get("last_requested_slot")
-            invalid_input_msg = "\n\n❗ 죄송하지만 이해하기 어려운 답변이에요. 조금 더 구체적으로 말씀해 주세요." if last_slot and not is_valid_slot_answer(utterance) else ""
-            
+        # 주제나 산출물 중 하나만 비어있는 경우
+        elif user_state["주제"] == "" or user_state["산출물"] == "":
+            if is_likely_topic(utterance) and user_state["주제"] == "":
+                user_state["주제"] = utterance
+            elif is_likely_output(utterance) and user_state["산출물"] == "":
+                user_state["산출물"] = utterance
+            else:
+                # 유사도 기반 매칭 시도
+                if user_state["주제"] == "":
+                    match = match_similar_slot_lightweight(utterance, "주제")
+                    if match:
+                        user_state["주제"] = match
+                elif user_state["산출물"] == "":
+                    match = match_similar_slot_lightweight(utterance, "산출물")
+                    if match:
+                        user_state["산출물"] = match
+        
+        # 주제와 산출물이 채워졌고 기간이 비어있는 경우
+        elif user_state["기간"] == "":
+            if any(keyword in utterance for keyword in ["일", "개월", "주", "달", "년"]):
+                user_state["기간"] = utterance
+        
+        # 상세 파라미터가 있는 경우 우선 적용
+        for slot in ["주제", "산출물", "기간"]:
+            if slot in detail_params and detail_params[slot].get("origin"):
+                user_state[slot] = detail_params[slot]["origin"]
+            elif slot in params:
+                user_state[slot] = params.get(slot) or params.get(f"${slot}", "")
+        
+        # 미입력된 슬롯 확인 및 메시지 생성
+        if user_state["주제"] == "" or user_state["산출물"] == "":
+            # 첫 단계: 주제와 산출물 요청
             return JSONResponse(content={
                 "version": "2.0",
                 "template": {
                     "outputs": [{
                         "simpleText": {
-                            "text": f"📝 {field_text}을(를) 알려주세요!{invalid_input_msg}"
+                            "text": "📝 프로젝트 주제와 원하시는 산출물을 알려주세요!\n(예: 사주 플랫폼, AI 챗봇)"
                         }
                     }]
                 }
             })
-           
+        elif user_state["기간"] == "":
+            # 두 번째 단계: 기간 요청
+            return JSONResponse(content={
+                "version": "2.0",
+                "template": {
+                    "outputs": [{
+                        "simpleText": {
+                            "text": "⌛ 예상 개발 기간을 알려주세요! (예: 2개월, 3주 등)"
+                        }
+                    }]
+                }
+            })
         
-        # GPT 요청 비동기 처리
-        background_tasks.add_task(process_gpt, user_id)
+        # 모든 슬롯이 채워진 경우 GPT 요청 처리
+        user_input = f"{user_state['주제']}, {user_state['산출물']}, {user_state['기간']}"
+        USER_INPUTS[user_id] = user_input
+        background_tasks.add_task(process_gpt, user_id, user_input)
         
         return JSONResponse(content={
             "version": "2.0",
@@ -266,7 +264,7 @@ async def kakao_webhook(request: Request, background_tasks: BackgroundTasks):
                 "outputs": [{
                     "simpleText": {
                         "text": f"📝 모든 정보를 받았어요! 몇 초 후 결과를 확인해주세요.\n\n👉 확인: /result/{user_id}"
-                    } 
+                    }
                 }],
                 "quickReplies": [{
                     "messageText": f"견적 결과 확인:{user_id}",
