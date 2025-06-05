@@ -6,6 +6,10 @@ from sentence_transformers import SentenceTransformer, util
 import os
 from tasks import process_utterance_async, set_project_data, ANALYSIS_RESULTS
 
+# 캐시 디렉토리 명시
+os.environ["TRANSFORMERS_CACHE"] = "/app/cache"
+os.environ["SENTENCE_TRANSFORMERS_HOME"] = "/app/cache"
+
 # 모델 로딩
 model = SentenceTransformer('paraphrase-multilingual-MiniLM-L12-v2')
 
