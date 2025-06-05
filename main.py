@@ -265,6 +265,12 @@ async def process_gpt(user_id: str, user_input: str, topic: str = "", output: st
 @app.post("/kakao/webhook")
 async def kakao_webhook(request: Request, background_tasks: BackgroundTasks):
     """카카오톡 웹훅 엔드포인트"""
+    # 변수 초기화
+    user_id = ""
+    utterance = ""
+    params = {}
+    detail_params = {}
+
     try:
         body = await request.json()
         user_id = body.get("userRequest", {}).get("user", {}).get("id", str(uuid.uuid4()))
