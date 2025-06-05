@@ -123,6 +123,15 @@ SERVICE_CATEGORIES = {
     }
 }
 
+def is_valid_slot_answer(text: str) -> bool:
+    """사용자 입력의 유효성을 검사합니다."""
+    text = text.strip()
+    if len(text) < 3:
+        return False
+    lower = text.lower()
+    invalid_keywords = ["없", "모르", "모름", "몰라", "글쎄", "무", "잘 몰라", "기억 안", "생각 안"]
+    return not any(kw in lower for kw in invalid_keywords)
+
 def build_prompt(user_input: str, service_categories: Dict[str, Any]) -> str:
     """사용자 입력과 서비스 카테고리를 기반으로 GPT 프롬프트를 생성합니다."""
     prompt = f"사용자의 요청:\n\"{user_input}\"\n\n"
@@ -248,7 +257,7 @@ async def kakao_webhook(request: Request, background_tasks: BackgroundTasks):
             elif USER_SLOT_STATE[user_id][slot] == "":  # 아직도 비어있으면
                 # 이전에 해당 슬롯을 요청했었다면, 현재 발화를 해당 슬롯의 값으로 사용
                 last_requested_slot = USER_SLOT_STATE[user_id].get("last_requested_slot")
-                if last_requested_slot == slot:
+                if last_requested_slot == slot and is_valid_slot_answer(utterance):
                     USER_SLOT_STATE[user_id][slot] = utterance
                 
         user_state = USER_SLOT_STATE[user_id]
@@ -257,7 +266,6 @@ async def kakao_webhook(request: Request, background_tasks: BackgroundTasks):
         missing_slots = [k for k, v in user_state.items() if not v and k != "last_requested_slot" and k != "retry_count"]
         
         if missing_slots:
-            # retry_count 증가
             USER_SLOT_STATE[user_id]["retry_count"] += 1
             
             # 3회 이상 실패 시 전체 초기화
@@ -282,15 +290,24 @@ async def kakao_webhook(request: Request, background_tasks: BackgroundTasks):
                     }
                 })
             
-            # 아직 3회 미만이면 다음 슬롯 요청
-            next_slot = missing_slots[0]
-            USER_SLOT_STATE[user_id]["last_requested_slot"] = next_slot
+            # 첫 요청 또는 일부만 입력된 경우 → 남은 항목 묶어서 물어보기
+            USER_SLOT_STATE[user_id]["last_requested_slot"] = missing_slots[0]
+            
+            # 질문 텍스트 생성
+            slot_labels = {"주제": "프로젝트 주제", "산출물": "원하시는 산출물", "기간": "예상 개발 기간"}
+            requested_fields = [slot_labels[slot] for slot in missing_slots]
+            field_text = "와 ".join(requested_fields) if len(requested_fields) == 2 else ", ".join(requested_fields)
+            
+            # 이전 입력이 유효하지 않은 경우 안내 메시지 추가
+            last_slot = USER_SLOT_STATE[user_id].get("last_requested_slot")
+            invalid_input_msg = "\n\n❗ 죄송하지만 이해하기 어려운 답변이에요. 조금 더 구체적으로 말씀해 주세요." if last_slot and not is_valid_slot_answer(utterance) else ""
+            
             return JSONResponse(content={
                 "version": "2.0",
                 "template": {
                     "outputs": [{
                         "simpleText": {
-                            "text": f"'{next_slot}' 정보를 알려주세요! ({USER_SLOT_STATE[user_id]['retry_count']}회 시도됨)"
+                            "text": f"📝 {field_text}을(를) 알려주세요!{invalid_input_msg}"
                         }
                     }]
                 }
