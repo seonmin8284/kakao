@@ -312,23 +312,17 @@ async def kakao_webhook(request: Request, background_tasks: BackgroundTasks):
                     }]
                 }
             })
-            
-        # 모든 정보가 입력되었을 경우
-        full_input = f"""
-프로젝트 주제: {user_state['주제']}
-산출물: {user_state['산출물']}
-예상 기간: {user_state['기간']}
-        """.strip()
+           
         
         # GPT 요청 비동기 처리
-        background_tasks.add_task(process_gpt, user_id, full_input)
+        background_tasks.add_task(process_gpt, user_id)
         
         return JSONResponse(content={
             "version": "2.0",
             "template": {
                 "outputs": [{
                     "simpleText": {
-                        "text": f"📝 모든 정보를 받았어요! 몇 초 후 결과를 확인해주세요.\n\n현재 입력된 정보:\n{full_input}\n\n👉 확인: /result/{user_id}"
+                        "text": f"📝 모든 정보를 받았어요! 몇 초 후 결과를 확인해주세요.\n\n👉 확인: /result/{user_id}"
                     }
                 }],
                 "quickReplies": [{
