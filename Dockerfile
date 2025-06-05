@@ -3,6 +3,7 @@ FROM python:3.10-slim
 # 캐시된 모델 저장을 위한 환경 변수 설정
 ENV TRANSFORMERS_CACHE=/app/cache
 ENV SENTENCE_TRANSFORMERS_HOME=/app/cache
+ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
@@ -16,9 +17,11 @@ RUN apt-get update && \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# 모델 사전 다운로드 (최초 빌드 시만 실행됨)
+# 모델 사전 다운로드 및 검증 (최초 빌드 시만 실행됨)
 RUN mkdir -p /app/cache && \
-    python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('paraphrase-multilingual-MiniLM-L12-v2')"
+    echo "Preloading BERT model..." && \
+    python -c "from sentence_transformers import SentenceTransformer; model = SentenceTransformer('paraphrase-multilingual-MiniLM-L12-v2'); print('Model loaded successfully!')" && \
+    echo "Model preload complete!"
 
 # 나머지 소스 코드 복사
 COPY . .
@@ -26,5 +29,5 @@ COPY . .
 # 실행 권한 설정
 RUN chmod +x /app/main.py
 
-# 컨테이너 실행
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080"] 
+# 컨테이너 실행 (로깅 활성화)
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080", "--log-level", "info"] 
