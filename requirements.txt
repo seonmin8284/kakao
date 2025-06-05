@@ -1,6 +1,5 @@
-fastapi==0.109.2
-uvicorn==0.27.1
-pydantic==2.6.1
-openai==1.12.0
-python-multipart==0.0.9 
-sentence-transformers==2.2.0
+fastapi
+uvicorn
+pydantic
+openai
+python-multipart
