@@ -197,6 +197,24 @@ async def kakao_webhook(request: Request, background_tasks: BackgroundTasks):
             USER_INPUTS.pop(user_id, None)
             GPT_RESPONSES.pop(user_id, None)
         
+        # 처리 가능 여부 확인
+        if not any(keyword in utterance for keyword in ["포트폴리오", "가격", "견적", "비용", "프로젝트", "개발", "제작"]):
+            return JSONResponse(content={
+                "version": "2.0",
+                "template": {
+                    "outputs": [{
+                        "simpleText": {
+                            "text": "죄송합니다. 저는 포트폴리오 확인과 견적 상담만 도와드릴 수 있어요. 😅\n\n다음과 같은 내용을 문의해주세요:\n- 프로젝트 견적 문의\n- 포트폴리오 확인\n- 개발 비용 상담"
+                        }
+                    }],
+                    "quickReplies": [{
+                        "messageText": "새로운 견적 문의",
+                        "action": "message",
+                        "label": "견적 문의하기"
+                    }]
+                }
+            })
+        
         # 파라미터 추출 (상세 파라미터 우선, 없으면 일반 파라미터 사용)
         params = body.get("action", {}).get("params", {})
         detail_params = body.get("action", {}).get("detailParams", {})
@@ -208,20 +226,35 @@ async def kakao_webhook(request: Request, background_tasks: BackgroundTasks):
         if user_id not in USER_SLOT_STATE:
             USER_SLOT_STATE[user_id] = {"주제": "", "산출물": "", "기간": ""}
             
-        # 파라미터 업데이트 (상세 파라미터 우선)
+        # 단어 기반 슬롯 추론
+        if USER_SLOT_STATE[user_id]["주제"] == "" and any(keyword in utterance for keyword in ["플랫폼", "웹", "앱", "시스템", "사이트"]):
+            USER_SLOT_STATE[user_id]["주제"] = utterance
+        elif USER_SLOT_STATE[user_id]["산출물"] == "" and any(keyword in utterance for keyword in ["챗봇", "대시보드", "API", "서버", "데이터베이스"]):
+            USER_SLOT_STATE[user_id]["산출물"] = utterance
+        elif USER_SLOT_STATE[user_id]["기간"] == "" and any(keyword in utterance for keyword in ["일", "개월", "주", "달", "년"]):
+            USER_SLOT_STATE[user_id]["기간"] = utterance
+            
+        # 파라미터 업데이트 (상세 파라미터 우선, 일반 파라미터, 발화 순)
         for slot in ["주제", "산출물", "기간"]:
             if slot in detail_params and detail_params[slot].get("origin"):
                 USER_SLOT_STATE[user_id][slot] = detail_params[slot]["origin"]
             elif slot in params:
                 USER_SLOT_STATE[user_id][slot] = params.get(slot) or params.get(f"${slot}", "")
+            elif USER_SLOT_STATE[user_id][slot] == "":  # 아직도 비어있으면
+                # 이전에 해당 슬롯을 요청했었다면, 현재 발화를 해당 슬롯의 값으로 사용
+                last_requested_slot = USER_SLOT_STATE[user_id].get("last_requested_slot")
+                if last_requested_slot == slot:
+                    USER_SLOT_STATE[user_id][slot] = utterance
                 
         user_state = USER_SLOT_STATE[user_id]
         
         # 미입력된 슬롯 확인
-        missing_slots = [k for k, v in user_state.items() if not v]
+        missing_slots = [k for k, v in user_state.items() if not v and k != "last_requested_slot"]
         
         if missing_slots:
             next_slot = missing_slots[0]
+            # 다음에 확인할 수 있도록 마지막으로 요청한 슬롯 저장
+            USER_SLOT_STATE[user_id]["last_requested_slot"] = next_slot
             return JSONResponse(content={
                 "version": "2.0",
                 "template": {
