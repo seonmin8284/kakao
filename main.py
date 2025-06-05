@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 import os
 from typing import Dict, Any
 import uuid
-from sentence_transformers import SentenceTransformer, util
+from difflib import get_close_matches
 
 # 환경 변수 로드
 load_dotenv()
@@ -38,29 +38,11 @@ JUJAE_ENTRIES = [
 
 JUJAE_SYNONYMS = [kw.lower() for kw in JUJAE_ENTRIES]  # 소문자 비교용 리스트
 
-# 임베딩 모델 초기화
-embedding_model = SentenceTransformer('paraphrase-MiniLM-L6-v2')
-
-# 키워드 후보 임베딩 (최초 1회만)
-output_embeddings = embedding_model.encode(SANCHUL_ENTRIES, convert_to_tensor=True)
-topic_embeddings = embedding_model.encode(JUJAE_ENTRIES, convert_to_tensor=True)
-
-def match_similar_slot(text: str, slot_type: str, threshold=0.7) -> str:
-    """입력 문장과 가장 유사한 주제 또는 산출물을 반환"""
-    text_embedding = embedding_model.encode(text, convert_to_tensor=True)
-
-    if slot_type == "산출물":
-        similarities = util.pytorch_cos_sim(text_embedding, output_embeddings)[0]
-        best_idx = int(similarities.argmax())
-        if similarities[best_idx] > threshold:
-            return SANCHUL_ENTRIES[best_idx]
-    elif slot_type == "주제":
-        similarities = util.pytorch_cos_sim(text_embedding, topic_embeddings)[0]
-        best_idx = int(similarities.argmax())
-        if similarities[best_idx] > threshold:
-            return JUJAE_ENTRIES[best_idx]
-    
-    return ""
+def match_similar_slot_lightweight(text: str, slot_type: str) -> str:
+    """문자열 유사도 기반으로 가장 유사한 주제 또는 산출물을 반환"""
+    candidates = SANCHUL_ENTRIES if slot_type == "산출물" else JUJAE_ENTRIES
+    matches = get_close_matches(text, candidates, n=1, cutoff=0.6)
+    return matches[0] if matches else ""
 
 def is_likely_output(text: str) -> bool:
     """산출물 슬롯에 들어갈 가능성이 높은지 판단"""
@@ -194,7 +176,7 @@ async def kakao_webhook(request: Request, background_tasks: BackgroundTasks):
             if is_likely_output(utterance):
                 USER_SLOT_STATE[user_id]["산출물"] = utterance
             else:
-                match = match_similar_slot(utterance, "산출물")
+                match = match_similar_slot_lightweight(utterance, "산출물")
                 if match:
                     USER_SLOT_STATE[user_id]["산출물"] = match
 
@@ -202,7 +184,7 @@ async def kakao_webhook(request: Request, background_tasks: BackgroundTasks):
             if is_likely_topic(utterance):
                 USER_SLOT_STATE[user_id]["주제"] = utterance
             else:
-                match = match_similar_slot(utterance, "주제")
+                match = match_similar_slot_lightweight(utterance, "주제")
                 if match:
                     USER_SLOT_STATE[user_id]["주제"] = match
 
