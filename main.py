@@ -271,6 +271,8 @@ async def kakao_webhook(request: Request, background_tasks: BackgroundTasks):
     params = {}
     detail_params = {}
 
+
+
     try:
         body = await request.json()
         user_id = body.get("userRequest", {}).get("user", {}).get("id", str(uuid.uuid4()))
