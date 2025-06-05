@@ -197,8 +197,13 @@ async def kakao_webhook(request: Request, background_tasks: BackgroundTasks):
             USER_INPUTS.pop(user_id, None)
             GPT_RESPONSES.pop(user_id, None)
         
-        # 처리 가능 여부 확인
-        if not any(keyword in utterance for keyword in ["포트폴리오", "가격", "견적", "비용", "프로젝트", "개발", "제작"]):
+        # 슬롯 필링 중인지 여부 확인
+        in_slot_filling = user_id in USER_SLOT_STATE and any(
+            USER_SLOT_STATE[user_id].get(slot, "") == "" for slot in ["주제", "산출물", "기간"]
+        )
+        
+        # 처리 가능 여부 확인 → 슬롯 필링 중이면 검사 건너뜀
+        if not in_slot_filling and not any(keyword in utterance for keyword in ["포트폴리오", "가격", "견적", "비용", "프로젝트", "개발", "제작"]):
             return JSONResponse(content={
                 "version": "2.0",
                 "template": {
