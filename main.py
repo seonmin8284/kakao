@@ -143,6 +143,7 @@ def build_prompt(user_input: str, service_categories: Dict[str, Any]) -> str:
     prompt += "4. 총 견적: 모든 단계의 비용 합계\n"
     prompt += "5. 추가 고려사항: 선택적으로 추가할 수 있는 기능이나 대안\n"
     
+    
     return prompt
 
 def call_gpt_for_estimate(user_input: str) -> str:
