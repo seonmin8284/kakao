@@ -12,9 +12,10 @@ openai.api_key = os.getenv("OPENAI_API_KEY")
 
 app = FastAPI()
 
-# 결과 저장소 (실제 운영에서는 DB나 Redis 사용)
+# 저장소 (실제 운영에서는 DB나 Redis 사용)
 GPT_RESPONSES: Dict[str, str] = {}
-USER_INPUTS: Dict[str, str] = {}  # 사용자 입력 저장소
+USER_INPUTS: Dict[str, str] = {}
+USER_SLOT_STATE: Dict[str, Dict[str, str]] = {}
 
 # 서비스 카테고리 데이터
 SERVICE_CATEGORIES = {
@@ -182,38 +183,72 @@ async def kakao_webhook(request: Request, background_tasks: BackgroundTasks):
     """카카오톡 웹훅 엔드포인트"""
     try:
         body = await request.json()
+        user_id = body.get("userRequest", {}).get("user", {}).get("id", str(uuid.uuid4()))
         utterance = body.get("userRequest", {}).get("utterance", "")
         
         # 견적 결과 확인 요청 처리
         if utterance.startswith("견적 결과 확인:"):
-            user_id = utterance.split("견적 결과 확인:")[-1].strip()
-            return await get_result(user_id)
-        
-        # 파라미터 추출
-        action_params = body.get("action", {}).get("params", {})
-        print("[DEBUG] action_params:", action_params)
-
-        topic = action_params.get("주제") or action_params.get("$주제", "")
-        duration = action_params.get("기간") or action_params.get("$기간", "")
-
+            result_user_id = utterance.split("견적 결과 확인:")[-1].strip()
+            return await get_result(result_user_id)
             
-        user_id = str(uuid.uuid4())
+        # 새로운 견적 문의 시 상태 초기화
+        if utterance == "새로운 견적 문의":
+            USER_SLOT_STATE.pop(user_id, None)
+            USER_INPUTS.pop(user_id, None)
+            GPT_RESPONSES.pop(user_id, None)
         
-        # 사용자의 요청 프롬프트 구성
-        user_input = f"""
-프로젝트 주제: {topic}
-예상 기간: {duration}
+        # 파라미터 추출 (상세 파라미터 우선, 없으면 일반 파라미터 사용)
+        params = body.get("action", {}).get("params", {})
+        detail_params = body.get("action", {}).get("detailParams", {})
+        
+        print("[DEBUG] params:", params)
+        print("[DEBUG] detail_params:", detail_params)
+        
+        # 기존 상태 없으면 초기화
+        if user_id not in USER_SLOT_STATE:
+            USER_SLOT_STATE[user_id] = {"주제": "", "산출물": "", "기간": ""}
+            
+        # 파라미터 업데이트 (상세 파라미터 우선)
+        for slot in ["주제", "산출물", "기간"]:
+            if slot in detail_params and detail_params[slot].get("origin"):
+                USER_SLOT_STATE[user_id][slot] = detail_params[slot]["origin"]
+            elif slot in params:
+                USER_SLOT_STATE[user_id][slot] = params.get(slot) or params.get(f"${slot}", "")
+                
+        user_state = USER_SLOT_STATE[user_id]
+        
+        # 미입력된 슬롯 확인
+        missing_slots = [k for k, v in user_state.items() if not v]
+        
+        if missing_slots:
+            next_slot = missing_slots[0]
+            return JSONResponse(content={
+                "version": "2.0",
+                "template": {
+                    "outputs": [{
+                        "simpleText": {
+                            "text": f"'{next_slot}' 정보를 알려주세요!"
+                        }
+                    }]
+                }
+            })
+            
+        # 모든 정보가 입력되었을 경우
+        full_input = f"""
+프로젝트 주제: {user_state['주제']}
+산출물: {user_state['산출물']}
+예상 기간: {user_state['기간']}
         """.strip()
         
-        # GPT 요청 비동기 실행
-        background_tasks.add_task(process_gpt, user_id, user_input)
+        # GPT 요청 비동기 처리
+        background_tasks.add_task(process_gpt, user_id, full_input)
         
         return JSONResponse(content={
             "version": "2.0",
             "template": {
                 "outputs": [{
                     "simpleText": {
-                        "text": f"📝 요청을 접수했어요!\n몇 초 후 결과를 확인해주세요.\n주제: {topic}기간: {duration}\n👉 확인: /result/{user_id}"
+                        "text": f"📝 모든 정보를 받았어요! 몇 초 후 결과를 확인해주세요.\n\n현재 입력된 정보:\n{full_input}\n\n👉 확인: /result/{user_id}"
                     }
                 }],
                 "quickReplies": [{
@@ -240,6 +275,9 @@ async def get_result(user_id: str):
     """결과 조회 엔드포인트"""
     response_text = GPT_RESPONSES.get(user_id, "❌ 존재하지 않는 요청 ID이거나 아직 처리 중입니다.")
     user_input = USER_INPUTS.get(user_id, "입력 정보가 없습니다.")
+    
+    # 결과 조회 후 상태 초기화 (선택사항)
+    USER_SLOT_STATE.pop(user_id, None)
     
     return {
         "version": "2.0",
