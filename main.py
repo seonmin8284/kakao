@@ -5,10 +5,6 @@ from dotenv import load_dotenv
 import os
 from typing import Dict, Any
 
-# 환경 변수 로드
-load_dotenv()
-openai.api_key = os.getenv("OPENAI_API_KEY")
-
 app = FastAPI()
 
 # 서비스 카테고리 데이터
