@@ -5,6 +5,9 @@ from sentence_transformers import SentenceTransformer, util
 app = FastAPI()
 model = SentenceTransformer("paraphrase-MiniLM-L6-v2")
 
+# 💾 간단한 캐시 메모리 저장소
+memory_cache = {}
+
 # 가격 테이블
 FEATURE_COSTS = {
     "기획": 1000000, "프론트엔드": 2000000, "백엔드": 3000000,
@@ -56,28 +59,56 @@ def estimate_from_outputs(outputs):
                 total += cost
     return total, matched
 
-@app.post("/kakao/webhook")
-async def kakao_webhook(request: Request):
-    body = await request.json()
-    utterance = body.get("userRequest", {}).get("utterance", "")
-    user_id = body.get("userRequest", {}).get("user", {}).get("id", "unknown")
-
-    outputs, project = get_outputs_from_project(utterance)
-    total, matched = estimate_from_outputs(outputs)
-
-    if not matched:
-        msg = "죄송해요. 어떤 기능이 필요한지 잘 이해하지 못했어요. 다시 말씀해 주세요!"
-    else:
-        detail = "\n".join([f"- {k}: {v:,}원" for k, v in matched])
-        msg = (
-            f"🧾 사용자({user_id})님의 '{project}' 관련 예상 견적입니다.\n\n"
-            f"{detail}\n\n"
-            f"💰 총 견적: {total:,}원입니다.\n궁금하신 점은 더 말씀해주세요!"
-        )
-
+def build_kakao_response(msg: str):
     return JSONResponse(content={
         "version": "2.0",
         "template": {
             "outputs": [{"simpleText": {"text": msg}}]
         }
     })
+
+@app.post("/kakao/webhook")
+async def kakao_webhook(request: Request):
+    body = await request.json()
+    utterance = body.get("userRequest", {}).get("utterance", "")
+    user_id = body.get("userRequest", {}).get("user", {}).get("id", "unknown")
+
+    # ⛓️ 캐시 초기화
+    if user_id not in memory_cache:
+        memory_cache[user_id] = {}
+
+    user_data = memory_cache[user_id]
+
+    # 1. 슬롯 채우기 시도
+    if "project" not in user_data:
+        try:
+            outputs, project = get_outputs_from_project(utterance)
+            user_data["project"] = project
+            user_data["outputs"] = outputs
+        except:
+            pass
+
+    elif "period" not in user_data:
+        if any(word in utterance for word in ["일", "주", "개월", "달"]):
+            user_data["period"] = utterance
+
+    # 2. 부족한 슬롯에 따라 되묻기
+    if "project" not in user_data:
+        return build_kakao_response("어떤 프로젝트를 계획 중이신가요? 예: 고객센터 챗봇, 뉴스 요약 시스템 등")
+
+    if "period" not in user_data:
+        return build_kakao_response("예상 개발 기간은 어느 정도인가요? 예: 1개월, 2주 등")
+
+    # 3. 모든 슬롯이 채워졌다면 견적 산정
+    total, matched = estimate_from_outputs(user_data["outputs"])
+    detail = "\n".join([f"- {k}: {v:,}원" for k, v in matched])
+    msg = (
+        f"🧾 사용자({user_id})님의 '{user_data['project']}' 프로젝트 예상 견적입니다.\n"
+        f"📅 예상 기간: {user_data['period']}\n\n"
+        f"{detail}\n\n"
+        f"💰 총 견적: {total:,}원입니다.\n정확한 상담을 원하시면 연락처를 남겨주세요 😊"
+    )
+
+    # 💬 응답 후 캐시 초기화
+    del memory_cache[user_id]
+    return build_kakao_response(msg)
