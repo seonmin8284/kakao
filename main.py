@@ -321,12 +321,21 @@ async def kakao_webhook(request: Request, background_tasks: BackgroundTasks):
         if user_state["주제"] == "" and user_state["산출물"] == "":
             # 예: "쇼핑몰 웹사이트" → 각 키워드로 나눠서 감지
             tokens = utterance.replace(",", " ").replace("을", "").replace("를", "").split()
+            
+            # 주제 매칭
             for token in tokens:
                 token = token.strip()
                 if user_state["주제"] == "" and is_likely_topic(token):
                     user_state["주제"] = token
-                elif user_state["산출물"] == "" and is_likely_output(token):
-                    user_state["산출물"] = token
+            
+            # 산출물 다중 매칭
+            matched_outputs = []
+            for token in tokens:
+                token = token.strip().lower()
+                if is_likely_output(token):
+                    matched_outputs.append(token)
+            if matched_outputs:
+                user_state["산출물"] = ", ".join(sorted(set(matched_outputs)))
         
         # 2. 주제가 아직 없으면 주제부터 요청
         if user_state["주제"] == "":
@@ -348,20 +357,27 @@ async def kakao_webhook(request: Request, background_tasks: BackgroundTasks):
         
         # 3. 산출물이 없으면 산출물 요청
         if user_state["산출물"] == "":
-            output_match = match_similar_slot_lightweight(utterance, "산출물")
-            if output_match:
-                user_state["산출물"] = output_match
+            # 여러 개 산출물 키워드가 있는 경우 먼저 추출 시도
+            matched_outputs = [
+                entry for entry in SANCHUL_SYNONYMS if entry in utterance.lower()
+            ]
+            if matched_outputs:
+                user_state["산출물"] = ", ".join(sorted(set(matched_outputs)))
             else:
-                return JSONResponse(content={
-                    "version": "2.0",
-                    "template": {
-                        "outputs": [{
-                            "simpleText": {
-                                "text": "📦 어떤 산출물을 원하시나요? (예: 웹사이트, 앱, 관리자 페이지 등)"
-                            }
-                        }]
-                    }
-                })
+                output_match = match_similar_slot_lightweight(utterance, "산출물")
+                if output_match:
+                    user_state["산출물"] = output_match
+                else:
+                    return JSONResponse(content={
+                        "version": "2.0",
+                        "template": {
+                            "outputs": [{
+                                "simpleText": {
+                                    "text": "📦 어떤 산출물을 원하시나요? (예: 웹사이트, 앱, 관리자 페이지 등)"
+                                }
+                            }]
+                        }
+                    })
         
         # 4. 기간 입력이 없으면 요청
         if user_state["기간"] == "":
