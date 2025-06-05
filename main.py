@@ -289,53 +289,66 @@ async def kakao_webhook(request: Request, background_tasks: BackgroundTasks):
             
         user_state = USER_SLOT_STATE[user_id]
         
-        # 주제와 산출물이 모두 비어있는 경우 쉼표 구분 입력 처리
+        # 1. 주제 + 산출물 동시에 감지 가능성 우선 확인
         if user_state["주제"] == "" and user_state["산출물"] == "":
-            parts = [part.strip() for part in utterance.split(",")]
-            if len(parts) == 2:  # 쉼표로 구분된 두 부분이 있는 경우
-                # 첫 번째 부분이 주제인지 산출물인지 판단
-                if is_likely_topic(parts[0]) and is_likely_output(parts[1]):
-                    user_state["주제"] = parts[0]
-                    user_state["산출물"] = parts[1]
-                elif is_likely_output(parts[0]) and is_likely_topic(parts[1]):
-                    user_state["산출물"] = parts[0]
-                    user_state["주제"] = parts[1]
-            else:  # 쉼표로 구분되지 않은 경우 개별 판단
-                if is_likely_topic(utterance) and user_state["주제"] == "":
-                    user_state["주제"] = utterance
-                if is_likely_output(utterance) and user_state["산출물"] == "":
-                    user_state["산출물"] = utterance
-                # 유사도 보완
-                if user_state["주제"] == "":
-                    topic_match = match_similar_slot_lightweight(utterance, "주제")
-                    if topic_match:
-                        user_state["주제"] = topic_match
-                if user_state["산출물"] == "":
-                    output_match = match_similar_slot_lightweight(utterance, "산출물")
-                    if output_match:
-                        user_state["산출물"] = output_match
+            # 예: "쇼핑몰 웹사이트" → 각 키워드로 나눠서 감지
+            tokens = utterance.replace(",", " ").replace("을", "").replace("를", "").split()
+            for token in tokens:
+                token = token.strip()
+                if user_state["주제"] == "" and is_likely_topic(token):
+                    user_state["주제"] = token
+                elif user_state["산출물"] == "" and is_likely_output(token):
+                    user_state["산출물"] = token
         
-        # 주제나 산출물 중 하나만 비어있는 경우
-        else:
-            if user_state["주제"] == "":
-                if is_likely_topic(utterance):
-                    user_state["주제"] = utterance
-                else:
-                    topic_match = match_similar_slot_lightweight(utterance, "주제")
-                    if topic_match:
-                        user_state["주제"] = topic_match
-            
-            if user_state["산출물"] == "":
-                if is_likely_output(utterance):
-                    user_state["산출물"] = utterance
-                else:
-                    output_match = match_similar_slot_lightweight(utterance, "산출물")
-                    if output_match:
-                        user_state["산출물"] = output_match
+        # 2. 주제가 아직 없으면 주제부터 요청
+        if user_state["주제"] == "":
+            topic_match = match_similar_slot_lightweight(utterance, "주제")
+            if topic_match:
+                user_state["주제"] = topic_match
+            else:
+                return JSONResponse(content={
+                    "version": "2.0",
+                    "template": {
+                        "outputs": [{
+                            "simpleText": {
+                                "text": "📝 프로젝트 주제를 알려주세요! (예: 쇼핑몰, 교육 플랫폼 등)"
+                            }
+                        }]
+                    }
+                })
         
-        # 주제와 산출물이 채워졌고 기간이 비어있는 경우
-        if user_state["기간"] == "" and is_valid_period(utterance):
-            user_state["기간"] = utterance
+        # 3. 산출물이 없으면 산출물 요청
+        if user_state["산출물"] == "":
+            output_match = match_similar_slot_lightweight(utterance, "산출물")
+            if output_match:
+                user_state["산출물"] = output_match
+            else:
+                return JSONResponse(content={
+                    "version": "2.0",
+                    "template": {
+                        "outputs": [{
+                            "simpleText": {
+                                "text": "📦 어떤 산출물을 원하시나요? (예: 웹사이트, 앱, 관리자 페이지 등)"
+                            }
+                        }]
+                    }
+                })
+        
+        # 4. 기간 입력이 없으면 요청
+        if user_state["기간"] == "":
+            if is_valid_period(utterance):
+                user_state["기간"] = utterance
+            else:
+                return JSONResponse(content={
+                    "version": "2.0",
+                    "template": {
+                        "outputs": [{
+                            "simpleText": {
+                                "text": "⌛ 예상 개발 기간을 알려주세요! (예: 2개월, 3주 등)"
+                            }
+                        }]
+                    }
+                })
         
         # 상세 파라미터가 있는 경우 우선 적용
         for slot in ["주제", "산출물", "기간"]:
@@ -343,32 +356,6 @@ async def kakao_webhook(request: Request, background_tasks: BackgroundTasks):
                 user_state[slot] = detail_params[slot]["origin"]
             elif slot in params:
                 user_state[slot] = params.get(slot) or params.get(f"${slot}", "")
-        
-        # 미입력된 슬롯 확인 및 메시지 생성
-        if user_state["주제"] == "" or user_state["산출물"] == "":
-            # 첫 단계: 주제와 산출물 요청
-            return JSONResponse(content={
-                "version": "2.0",
-                "template": {
-                    "outputs": [{
-                        "simpleText": {
-                            "text": "📝 프로젝트 주제와 원하시는 산출물을 알려주세요!"
-                        }
-                    }]
-                }
-            })
-        elif user_state["기간"] == "":
-            # 두 번째 단계: 기간 요청
-            return JSONResponse(content={
-                "version": "2.0",
-                "template": {
-                    "outputs": [{
-                        "simpleText": {
-                            "text": "⌛ 예상 개발 기간을 알려주세요! (예: 2개월, 3주 등)"
-                        }
-                    }]
-                }
-            })
         
         # 모든 슬롯이 채워진 경우에만 GPT 요청 처리
         if user_state["주제"] != "" and user_state["산출물"] != "" and user_state["기간"] != "":
