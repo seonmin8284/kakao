@@ -1,4 +1,4 @@
-from fastapi import FastAPI, BackgroundTasks
+from fastapi import FastAPI, BackgroundTasks, Request
 from pydantic import BaseModel
 from fastapi.responses import JSONResponse
 from typing import Optional, Dict, Any
@@ -209,9 +209,10 @@ def extract_outputs_from_text(text: str) -> list[str]:
     return matched
 
 @app.post("/kakao/webhook")
-async def kakao_webhook(request: KakaoRequest, background_tasks: BackgroundTasks):
-    utterance = request.userRequest.utterance
-    user_id = request.userRequest.user.id
+async def kakao_webhook(request: Request, background_tasks: BackgroundTasks):
+    body = await request.json()
+    utterance = body.get("userRequest", {}).get("utterance", "")
+    user_id = body.get("userRequest", {}).get("user", {}).get("id", "")
     
     # 1. 즉시 응답
     initial_response = {
@@ -220,7 +221,7 @@ async def kakao_webhook(request: KakaoRequest, background_tasks: BackgroundTasks
             "outputs": [
                 {
                     "simpleText": {
-                        "text": "문의 주셔서 감사합니다. 최적의 견적을 산출 중입니다. 잠시만 기다려주세요! 🤖✨\n\n5초 이내 상세 견적이 제공됩니다."
+                        "text": "문의 주셔서 감사합니다. 최적의 견적을 산출 중입니다. 잠시만 기다려주세요! 🤖✨"
                     }
                 }
             ],
