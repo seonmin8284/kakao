@@ -6,6 +6,7 @@ import os
 from typing import Dict, Any
 import uuid
 from difflib import get_close_matches
+import uvicorn
 
 # 환경 변수 로드
 load_dotenv()
@@ -271,8 +272,6 @@ async def kakao_webhook(request: Request, background_tasks: BackgroundTasks):
     params = {}
     detail_params = {}
 
-
-
     try:
         body = await request.json()
         user_id = body.get("userRequest", {}).get("user", {}).get("id", str(uuid.uuid4()))
@@ -459,3 +458,8 @@ async def get_result(user_id: str):
 async def health_check():
     """헬스 체크 엔드포인트"""
     return {"status": "healthy"}
+
+# 직접 실행 시 서버 구동
+if __name__ == "__main__":
+    port = int(os.getenv("PORT", 8000))  # Railway나 Fly.io 환경변수 대응
+    uvicorn.run(app, host="0.0.0.0", port=port)
