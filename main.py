@@ -270,6 +270,10 @@ async def kakao_webhook(request: Request, background_tasks: BackgroundTasks):
         user_id = body.get("userRequest", {}).get("user", {}).get("id", str(uuid.uuid4()))
         utterance = body.get("userRequest", {}).get("utterance", "")
         
+        # 파라미터 추출 (상세 파라미터 우선, 없으면 일반 파라미터 사용)
+        params = body.get("action", {}).get("params", {})
+        detail_params = body.get("action", {}).get("detailParams", {})
+        
         # 견적 결과 확인 요청 처리
         if utterance.startswith("견적 결과 확인:"):
             result_user_id = utterance.split("견적 결과 확인:")[-1].strip()
