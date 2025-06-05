@@ -21,7 +21,7 @@ USER_SLOT_STATE: Dict[str, Dict[str, str]] = {}
 # 산출물 관련 키워드
 SANCHUL_ENTRIES = [
     "웹", "챗봇", "플랫폼", "ETL", "시스템", "앱", "사이트", "MVP", "UI", "대시보드",
-    "API", "관리자 페이지", "리포트", "보고서", "자동화"
+    "API", "관리자 페이지", "리포트", "보고서", "자동화", "안드로이드", "IOS", "웹앱"
 ]
 
 SANCHUL_SYNONYMS = [kw.lower() for kw in SANCHUL_ENTRIES]  # 소문자 비교용 리스트
