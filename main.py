@@ -177,7 +177,7 @@ async def kakao_webhook(request: Request, background_tasks: BackgroundTasks):
                     }]
                 }
             })
-        
+    
         # 파라미터 추출 (상세 파라미터 우선, 없으면 일반 파라미터 사용)
         params = body.get("action", {}).get("params", {})
         detail_params = body.get("action", {}).get("detailParams", {})
@@ -284,7 +284,7 @@ async def kakao_webhook(request: Request, background_tasks: BackgroundTasks):
                 "outputs": [{
                     "simpleText": {
                         "text": f"📝 모든 정보를 받았어요! 몇 초 후 결과를 확인해주세요.\n\n👉 확인: /result/{user_id}"
-                    }
+                    } 
                 }],
                 "quickReplies": [{
                     "messageText": f"견적 결과 확인:{user_id}",
@@ -293,6 +293,7 @@ async def kakao_webhook(request: Request, background_tasks: BackgroundTasks):
                 }]
             }
         })
+        
     except Exception as e:
         return JSONResponse(content={
             "version": "2.0",
