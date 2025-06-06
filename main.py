@@ -301,10 +301,6 @@ def build_prompt_multicategory(user_input: str, service_categories: dict, catego
     
     prompt += f"💡 사용자가 요청한 주요 서비스 범주는 `{', '.join(categories)}`입니다.\n\n"
     
-    if expected_budget:
-        prompt += f"⚠️ 유의사항: 사용자의 예상 예산은 약 {expected_budget}입니다.\n"
-        prompt += "전체 견적 합계가 예산의 1.5배를 넘는다면, 최소 기능 중심의 축소 제안도 함께 제공해 주세요.\n\n"
-    
     prompt += "🧾 각 카테고리에 대해 빠짐없이 견적을 제시해 주세요. 일부 항목 누락 없이 전체 범위를 고려해 주세요.\n"
     prompt += "⚠️ 각 카테고리는 독립된 프로젝트 단위로 보고, 개별 견적을 제시해 주세요.\n\n"
     prompt += "우리 회사는 다음과 같은 서비스 카테고리를 제공합니다:\n"
@@ -372,20 +368,37 @@ def call_gpt_full_estimate(user_input: str, topic: str, output: str, expected_bu
     )
     return response.choices[0].message.content
 
-def call_gpt_shrunk_only(full_prompt: str, expected_budget: str = "") -> str:
-    """축소 제안만 GPT에 요청 (예산 이하로 제한)"""
-    prompt = "🛠 아래는 사용자가 요청한 서비스 범위입니다. 사용자가 입력한 예상 예산을 초과하지 않도록 최소 기능 중심의 '🔄 축소 제안'만 작성해주세요.\n\n"
-    
-    if expected_budget:
-        prompt += f"❗️예산을 반드시 지켜주세요: 최대 {expected_budget} 이하로 작성되어야 합니다.\n\n"
-    
+def call_gpt_shrunk_only(full_prompt: str, user_budget: str = "") -> str:
+    """축소 제안만 GPT에 요청 (사용자 예산이 너무 낮을 경우, 최소 구성 견적 제안)"""
+    prompt = ""
+
+    # 예산 파싱 (숫자만 추출)
+    min_reasonable_budget = 300_000  # 최소 수용 가능한 견적
+    user_budget_value = 0
+    match = re.search(r"([\d,]+)", user_budget.replace(",", ""))
+    if match:
+        user_budget_value = int(match.group(1))
+
+    # 예산이 너무 낮은 경우 GPT 안내 추가
+    if user_budget_value < min_reasonable_budget:
+        prompt += f"❗ 사용자의 입력 예산이 {user_budget}으로 너무 낮습니다. 현실적으로 가능한 최소한의 구성 견적을 안내해 주세요.\n"
+        prompt += "예산이 부족한 상황에서도 필수적인 기능만으로 구성해 주시고, 그에 맞는 적절한 비용을 제시해 주세요.\n\n"
+    else:
+        prompt += f"❗️예산을 반드시 지켜주세요: 최대 {user_budget} 이하로 작성되어야 합니다.\n\n"
+
+    prompt += "🛠 아래는 사용자가 요청한 서비스 범위입니다. 최소 기능 중심의 '🔄 축소 제안'만 작성해주세요.\n\n"
     prompt += full_prompt
     prompt += "\n\n🔄 축소 제안:\n[카테고리별 축소 견적 형식으로 작성해 주세요.]"
 
     response = openai.ChatCompletion.create(
         model="gpt-3.5-turbo",
-        messages=[{"role": "system", "content": "당신은 IT 견적 전문가이며, 반드시 사용자의 예산 이하로 견적을 작성해야 합니다."},
-                  {"role": "user", "content": prompt}],
+        messages=[{
+            "role": "system", 
+            "content": "당신은 IT 견적 전문가입니다. 사용자의 예산이 너무 낮을 경우, 현실적으로 가능한 최소 구성을 제안하고, 그렇지 않은 경우 예산 이하로 견적을 작성해야 합니다."
+        }, {
+            "role": "user", 
+            "content": prompt
+        }],
         temperature=0.7,
         max_tokens=800
     )
@@ -562,7 +575,7 @@ async def kakao_webhook(request: Request, background_tasks: BackgroundTasks):
         # 모든 슬롯이 채워진 경우에만 GPT 요청 처리
         if user_state["주제"] != "" and user_state["산출물"] != "" and user_state["기간"] != "" and user_state["예상_견적"] != "":
             user_input_parts = [
-                f"�� 주제: {user_state['주제']}",
+                f"🖋 주제: {user_state['주제']}",
                 f"🧾 산출물: {user_state['산출물']}",
                 f"🕒 기간: {user_state['기간']}",
                 f"💰 예산: {user_state['예상_견적']}"
@@ -613,7 +626,12 @@ async def get_result(user_id: str):
     """결과 조회 엔드포인트"""
     response_text = GPT_RESPONSES.get(user_id, "❌ 존재하지 않는 요청 ID이거나 아직 처리 중입니다.")
     user_input = USER_INPUTS.get(user_id, "입력 정보가 없습니다.")
-    
+    if user_id in USER_INPUTS:
+        quick_replies.append({
+            "messageText": f"축소 견적 확인:{user_id}",
+            "action": "message",
+            "label": "축소 견적만 보기"
+        })
     quick_replies = [{
         "messageText": "새로운 견적 문의",
         "action": "message",
@@ -621,12 +639,7 @@ async def get_result(user_id: str):
     }]
 
     # 입력 정보가 있으면 축소 견적 버튼 추가
-    if user_id in USER_INPUTS:
-        quick_replies.append({
-            "messageText": f"축소 견적 확인:{user_id}",
-            "action": "message",
-            "label": "축소 견적만 보기"
-        })
+
     
     return {
         "version": "2.0",
@@ -658,7 +671,7 @@ async def get_shrunk_result(user_id: str):
         shrunk_only_text = SHRUNK_RESPONSES[user_id]
     else:
         full_prompt = build_prompt_multicategory(user_input, SERVICE_CATEGORIES, infer_all_categories(topic, output), budget, topic, period)
-        shrunk_only_text = call_gpt_shrunk_only(full_prompt, expected_budget=budget)
+        shrunk_only_text = call_gpt_shrunk_only(full_prompt, user_budget=budget)
         SHRUNK_RESPONSES[user_id] = shrunk_only_text  # 캐싱
 
     return {
