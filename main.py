@@ -7,6 +7,7 @@ from typing import Dict, Any, List
 import uuid
 from difflib import get_close_matches
 import uvicorn
+import re
 
 # 환경 변수 로드
 load_dotenv()
@@ -309,6 +310,14 @@ async def process_gpt(user_id: str, user_input: str, topic: str = "", output: st
     GPT_RESPONSES[user_id] = "⏳ 요청을 처리 중입니다. 잠시만 기다려주세요..."
     GPT_RESPONSES[user_id] = call_gpt_for_estimate(user_input, topic, output, expected_budget)
 
+def normalize_budget(text: str) -> str:
+    """사용자가 입력한 금액 문자열을 숫자로 정규화"""
+    match = re.search(r"(\d{1,3}(?:,\d{3})*|\d+)", text.replace(',', ''))
+    if match:
+        amount = match.group(0)
+        return f"{int(amount):,}원"  # 예: 2000000 → '2,000,000원'
+    return ""
+
 @app.post("/kakao/webhook")
 async def kakao_webhook(request: Request, background_tasks: BackgroundTasks):
     """카카오톡 웹훅 엔드포인트"""
@@ -446,16 +455,20 @@ async def kakao_webhook(request: Request, background_tasks: BackgroundTasks):
 
         # 견적이 비어 있으면 다시 물어보기
         if user_state["예상_견적"] == "":
-            return JSONResponse(content={
-                "version": "2.0",
-                "template": {
-                    "outputs": [{
-                        "simpleText": {
-                            "text": "💰 대략 어느 정도의 예산을 생각하고 계신가요? (예: 100만원, 2000만원 등)"
-                        }
-                    }]
-                }
-            })
+            normalized = normalize_budget(utterance)
+            if normalized:
+                user_state["예상_견적"] = normalized
+            else:
+                return JSONResponse(content={
+                    "version": "2.0",
+                    "template": {
+                        "outputs": [{
+                            "simpleText": {
+                                "text": "💰 대략 어느 정도의 예산을 생각하고 계신가요? (예: 100만원, 2000만원 등)"
+                            }
+                        }]
+                    }
+                })
         
         # 상세 파라미터가 있는 경우 우선 적용
         for slot in ["주제", "산출물", "기간", "예상_견적"]:
