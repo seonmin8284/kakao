@@ -613,13 +613,7 @@ async def get_result(user_id: str):
     response_text = GPT_RESPONSES.get(user_id, "❌ 존재하지 않는 요청 ID이거나 아직 처리 중입니다.")
     user_input = USER_INPUTS.get(user_id, "입력 정보가 없습니다.")
     
-    if user_id in USER_INPUTS:
-        quick_replies.append({
-            "messageText": f"축소 견적 확인:{user_id}",
-            "action": "message",
-            "label": "축소 견적만 보기"
-        })
-    
+    # quick_replies 초기화를 먼저 수행
     quick_replies = [{
         "messageText": "새로운 견적 문의",
         "action": "message",
@@ -627,7 +621,12 @@ async def get_result(user_id: str):
     }]
 
     # 입력 정보가 있으면 축소 견적 버튼 추가
-
+    if user_id in USER_INPUTS:
+        quick_replies.append({
+            "messageText": f"축소 견적 확인:{user_id}",
+            "action": "message",
+            "label": "축소 견적만 보기"
+        })
     
     return {
         "version": "2.0",
