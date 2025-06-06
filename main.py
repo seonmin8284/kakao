@@ -336,69 +336,43 @@ def build_prompt_multicategory(user_input: str, service_categories: dict, catego
 
     return prompt
 
-def call_gpt_full_estimate(user_input: str, topic: str, output: str, expected_budget: str, period: str) -> str:
-    """전체 견적만 요청 (🔄 축소 제안 제외)"""
+def call_gpt_estimate_fitting_budget(user_input: str, topic: str, output: str, expected_budget: str, period: str) -> str:
+    """예산에 맞춘 견적을 바로 생성 (GPT 1회 호출로 처리)"""
     prompt = build_prompt_multicategory(
         user_input, SERVICE_CATEGORIES,
         infer_all_categories(topic, output),
         expected_budget, topic, period
     )
-    # 프롬프트에서 축소 제안 안내 삭제
-    prompt = re.sub(r"\n*만약 총 합계.*?축소안도 함께 제시해 주세요\.", "", prompt, flags=re.DOTALL)
+
+    min_reasonable_budget = 300_000
+    budget_value = 0
+    match = re.search(r"(\d+)", expected_budget.replace(",", ""))
+    if match:
+        budget_value = int(match.group(1))
+
+    # 예산 부족시 축소 구성으로 요청
+    if budget_value < min_reasonable_budget:
+        prompt = (
+            f"❗ 사용자의 입력 예산이 {expected_budget}으로 너무 낮습니다. 최소 구성만 제시해 주세요.\n"
+            + prompt
+        )
 
     response = openai.ChatCompletion.create(
         model="gpt-3.5-turbo",
         messages=[{"role": "system", "content": "당신은 IT 견적 전문가입니다."},
                   {"role": "user", "content": prompt}],
         temperature=0.7,
-        max_tokens=1200
+        max_tokens=1400
     )
     return response.choices[0].message.content
 
-def call_gpt_shrunk_only(full_prompt: str, user_budget: str = "") -> str:
-    """축소 제안만 GPT에 요청 (사용자 예산이 너무 낮을 경우, 최소 구성 견적 제안)"""
-    prompt = ""
-
-    # 예산 파싱 (숫자만 추출)
-    min_reasonable_budget = 300_000  # 최소 수용 가능한 견적
-    user_budget_value = 0
-    match = re.search(r"([\d,]+)", user_budget.replace(",", ""))
-    if match:
-        user_budget_value = int(match.group(1))
-
-    # 예산이 너무 낮은 경우 GPT 안내 추가
-    if user_budget_value < min_reasonable_budget:
-        prompt += f"❗ 사용자의 입력 예산이 {user_budget}으로 너무 낮습니다. 현실적으로 가능한 최소한의 구성 견적을 안내해 주세요.\n"
-        prompt += "예산이 부족한 상황에서도 필수적인 기능만으로 구성해 주시고, 그에 맞는 적절한 비용을 제시해 주세요.\n\n"
-    else:
-        prompt += f"❗️예산을 반드시 지켜주세요: 최대 {user_budget} 이하로 작성되어야 합니다.\n\n"
-
-    prompt += "🛠 아래는 사용자가 요청한 서비스 범위입니다. 최소 기능 중심의 '🔄 축소 제안'만 작성해주세요.\n\n"
-    prompt += full_prompt
-    prompt += "\n\n🔄 축소 제안:\n[카테고리별 축소 견적 형식으로 작성해 주세요.]"
-
-    response = openai.ChatCompletion.create(
-        model="gpt-3.5-turbo",
-        messages=[{
-            "role": "system", 
-            "content": "당신은 IT 견적 전문가입니다. 사용자의 예산이 너무 낮을 경우, 현실적으로 가능한 최소 구성을 제안하고, 그렇지 않은 경우 예산 이하로 견적을 작성해야 합니다."
-        }, {
-            "role": "user", 
-            "content": prompt
-        }],
-        temperature=0.7,
-        max_tokens=800
-    )
-    return response.choices[0].message.content.strip()
-
-# process_gpt 함수 수정
+# 비동기 GPT 요청 처리
 async def process_gpt(user_id: str, user_input: str, topic: str = "", output: str = "", expected_budget: str = "", period: str = ""):
     USER_INPUTS[user_id] = user_input
     GPT_RESPONSES[user_id] = "⏳ 요청을 처리 중입니다. 잠시만 기다려주세요..."
-    
-    # 전체 견적만 먼저 생성
-    full_response = call_gpt_full_estimate(user_input, topic, output, expected_budget, period)
-    GPT_RESPONSES[user_id] = full_response
+
+    response = call_gpt_estimate_fitting_budget(user_input, topic, output, expected_budget, period)
+    GPT_RESPONSES[user_id] = response
 
 @app.post("/kakao/webhook")
 async def kakao_webhook(request: Request, background_tasks: BackgroundTasks):
@@ -619,20 +593,12 @@ async def get_result(user_id: str):
     response_text = GPT_RESPONSES.get(user_id, "❌ 존재하지 않는 요청 ID이거나 아직 처리 중입니다.")
     user_input = USER_INPUTS.get(user_id, "입력 정보가 없습니다.")
     
-    # quick_replies 초기화를 먼저 수행
     quick_replies = [{
         "messageText": "새로운 견적 문의",
         "action": "message",
         "label": "새로운 견적 문의"
     }]
 
-    # 입력 정보가 있으면 축소 견적 버튼 추가
-    if user_id in USER_INPUTS:
-        quick_replies.append({
-            "messageText": f"축소 견적 확인:{user_id}",
-            "action": "message",
-            "label": "축소 견적만 보기"
-        })
     
     return {
         "version": "2.0",
@@ -646,38 +612,6 @@ async def get_result(user_id: str):
         }
     }
 
-@app.get("/shrunk_result/{user_id}")
-async def get_shrunk_result(user_id: str):
-    """축소 견적은 버튼 눌렀을 때 GPT 다시 호출"""
-    if user_id not in USER_INPUTS:
-        return {"version": "2.0", "template": {"outputs": [{"simpleText": {"text": "❌ 입력 정보가 없습니다."}}]}}
-
-    user_input = USER_INPUTS[user_id]
-    # 기존 full prompt 재활용
-    topic = USER_SLOT_STATE.get(user_id, {}).get("주제", "")
-    output = USER_SLOT_STATE.get(user_id, {}).get("산출물", "")
-    budget = USER_SLOT_STATE.get(user_id, {}).get("예상_견적", "")
-    period = USER_SLOT_STATE.get(user_id, {}).get("기간", "")
-
-    # 캐시된 축소 견적이 있으면 재사용
-    if user_id in SHRUNK_RESPONSES and SHRUNK_RESPONSES[user_id]:
-        shrunk_only_text = SHRUNK_RESPONSES[user_id]
-    else:
-        full_prompt = build_prompt_multicategory(user_input, SERVICE_CATEGORIES, infer_all_categories(topic, output), budget, topic, period)
-        shrunk_only_text = call_gpt_shrunk_only(full_prompt, user_budget=budget)
-        SHRUNK_RESPONSES[user_id] = shrunk_only_text  # 캐싱
-
-    return {
-        "version": "2.0",
-        "template": {
-            "outputs": [{"simpleText": {"text": shrunk_only_text}}],
-            "quickReplies": [{
-                "messageText": f"견적 결과 확인:{user_id}",
-                "action": "message",
-                "label": "전체 견적 보기"
-            }]
-        }
-    }
 
 @app.get("/health")
 async def health_check():
