@@ -287,8 +287,12 @@ def infer_primary_category(topic: str, output: str) -> str:
     output = output.lower()
     topic = topic.lower()
     
+    # 모바일 앱 관련 키워드
+    if any(kw in output for kw in ["앱", "ios", "안드로이드", "모바일"]):
+        return "모바일앱_플랫폼"
+    
     # 웹 플랫폼 관련 키워드
-    if any(kw in output for kw in ["앱", "웹", "사이트", "플랫폼", "관리자", "ui", "페이지"]):
+    elif any(kw in output for kw in ["웹", "사이트", "플랫폼", "관리자", "ui", "페이지"]):
         return "웹_플랫폼"
     
     # AI 챗봇 관련 키워드
@@ -311,24 +315,20 @@ def infer_all_categories(topic: str, output: str) -> List[str]:
     categories = set()
 
     # 웹/앱 관련
-    if any(kw in output for kw in ["앱", "웹", "사이트", "플랫폼"]):
+    if any(kw in output for kw in ["웹", "사이트", "플랫폼"]):
         categories.add("웹_플랫폼")
 
+    # 모바일 앱 관련
+    if any(kw in output for kw in ["앱", "ios", "안드로이드", "모바일"]):
+        categories.add("모바일앱_플랫폼")
+
     # 챗봇 관련
-    if any(kw in output for kw in ["챗봇", "대화", "AI"]):
+    if any(kw in output for kw in ["챗봇", "대화", "ai"]):
         categories.add("AI_챗봇")
 
     # 시각화/데이터 분석
     if any(kw in output for kw in ["분석", "대시보드", "리포트"]):
         categories.add("시각화_대시보드")
-
-    # 이미지 툴 (향후 필요시 SERVICE_CATEGORIES에 정의 필요)
-    if any(kw in output for kw in ["디자인", "이미지", "프로그램"]):
-        categories.add("디지털_이미지_툴")
-
-    # SNS 마케팅 운영 (향후 필요시 SERVICE_CATEGORIES에 정의 필요)
-    if any(kw in output for kw in ["틱톡", "유튜브", "페이스북", "인스타"]):
-        categories.add("SNS_운영")
 
     # 최소 1개 이상의 카테고리 보장
     if not categories:
@@ -347,7 +347,8 @@ def build_prompt_multicategory(user_input: str, service_categories: dict, catego
     prompt += f"💡 사용자가 요청한 주요 서비스 범주는 `{', '.join(categories)}`입니다.\n\n"
     
     prompt += "🧾 각 카테고리에 대해 빠짐없이 견적을 제시해 주세요. 일부 항목 누락 없이 전체 범위를 고려해 주세요.\n"
-    prompt += "⚠️ 각 카테고리는 독립된 프로젝트 단위로 보고, 개별 견적을 제시해 주세요.\n\n"
+    prompt += "⚠️ 각 카테고리는 독립된 프로젝트 단위로 보고, 개별 견적을 제시해 주세요.\n"
+    prompt += "\n💡 동일한 카테고리명(`📂 웹 플랫폼`)은 한 번만 출력하고, 그 아래에 모든 단계와 금액을 나열해 주세요.\n\n"
     prompt += "우리 회사는 다음과 같은 서비스 카테고리를 제공합니다:\n"
 
     for category in categories:
