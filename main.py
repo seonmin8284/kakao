@@ -19,6 +19,7 @@ app = FastAPI()
 GPT_RESPONSES: Dict[str, str] = {}
 USER_INPUTS: Dict[str, str] = {}
 USER_SLOT_STATE: Dict[str, Dict[str, str]] = {}
+SHRUNK_RESPONSES: Dict[str, str] = {}
 
 # 서비스 카테고리 데이터
 SERVICE_CATEGORIES = {
@@ -422,6 +423,11 @@ async def kakao_webhook(request: Request, background_tasks: BackgroundTasks):
             result_user_id = utterance.split("견적 결과 확인:")[-1].strip()
             return await get_result(result_user_id)
             
+        # 축소 견적 확인 요청 처리
+        if utterance.startswith("축소 견적 확인:"):
+            shrunk_user_id = utterance.split("축소 견적 확인:")[-1].strip()
+            return await get_shrunk_result(shrunk_user_id)
+
         # 새로운 견적 문의 시 상태 초기화
         if utterance == "새로운 견적 문의":
             USER_SLOT_STATE.pop(user_id, None)
