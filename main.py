@@ -195,10 +195,36 @@ def normalize_period(text: str) -> str:
 
 def normalize_budget(text: str) -> str:
     """사용자가 입력한 금액 문자열을 숫자로 정규화"""
-    match = re.search(r"(\d{1,3}(?:,\d{3})*|\d+)", text.replace(',', ''))
-    if match:
-        amount = match.group(0)
-        return f"{int(amount):,}원"  # 예: 2000000 → '2,000,000원'
+    # 금액 단위가 명시되지 않으면 무시
+    if not any(unit in text for unit in ["원", "만원", "천원", "억", "조"]):
+        return ""
+    
+    # 단위별 승수 정의
+    multipliers = {
+        "조": 1000000000000,
+        "억": 100000000,
+        "만원": 10000,
+        "천원": 1000,
+        "원": 1
+    }
+    
+    text = text.replace(",", "")
+    
+    # 숫자와 단위를 모두 포함하는 패턴 매칭
+    for unit, multiplier in multipliers.items():
+        if unit in text:
+            match = re.search(r"(\d+)\s*" + unit, text)
+            if match:
+                amount = int(match.group(1)) * multiplier
+                return f"{amount:,}원"
+    
+    # 단순 숫자 추출 (단위가 '원'인 경우)
+    if "원" in text:
+        match = re.search(r"(\d+)", text)
+        if match:
+            amount = int(match.group(1))
+            return f"{amount:,}원"
+            
     return ""
 
 def is_valid_period(text: str) -> bool:
