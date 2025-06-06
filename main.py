@@ -348,7 +348,8 @@ def build_prompt_multicategory(user_input: str, service_categories: dict, catego
     
     prompt += "🧾 각 카테고리에 대해 빠짐없이 견적을 제시해 주세요. 일부 항목 누락 없이 전체 범위를 고려해 주세요.\n"
     prompt += "⚠️ 각 카테고리는 독립된 프로젝트 단위로 보고, 개별 견적을 제시해 주세요.\n"
-    prompt += "\n💡 동일한 카테고리명(`📂 웹 플랫폼`)은 한 번만 출력하고, 그 아래에 모든 단계와 금액을 나열해 주세요.\n\n"
+    prompt += "\n💡 동일한 카테고리명(`📂 웹 플랫폼`)은 한 번만 출력하고, 그 아래에 모든 단계와 금액을 나열해 주세요.\n"
+    prompt += "\n💡 각 카테고리별 비용 총합(소계)을 마지막 줄에 `💰 소계: ...원` 형식으로 표시해 주세요.\n\n"
     prompt += "우리 회사는 다음과 같은 서비스 카테고리를 제공합니다:\n"
 
     for category in categories:
@@ -373,6 +374,7 @@ def build_prompt_multicategory(user_input: str, service_categories: dict, catego
     prompt += """📂 [카테고리명]
 - 필요한 단계: [금액]원
 - 예상 기간: [기간]
+💰 소계: [카테고리 총 금액]원
 
 이런 형식으로 각 카테고리별 견적을 제시한 후,
 
@@ -395,17 +397,27 @@ def call_gpt_estimate_fitting_budget(user_input: str, topic: str, output: str, e
     if match:
         budget_value = int(match.group(1))
 
-    # 예산 부족시 축소 구성으로 요청
+    # 예산 부족시 우선순위 기반 축소안 요청
     if budget_value < min_reasonable_budget:
         prompt = (
-            f"❗ 사용자의 입력 예산이 {expected_budget}으로 너무 낮습니다. 최소 구성만 제시해 주세요.\n"
+            f"❗ 사용자의 입력 예산이 {expected_budget}으로 제한적입니다.\n"
+            "예산이 부족한 경우, 다음 원칙에 따라 우선순위 기반으로 축소안을 설계해 주세요:\n\n"
+            "1️⃣ 핵심 기능 우선: 서비스의 핵심 가치를 전달할 수 있는 필수 기능을 우선 포함\n"
+            "2️⃣ MVP 중심: 최소 기능 제품(MVP) 구성에 필요한 단계만 우선 선택\n"
+            "3️⃣ 단계별 축소: 각 단계에서 필수적인 기능만 남기고 부가 기능은 제외\n"
+            "4️⃣ 우선순위 제시: 제외된 기능들은 향후 업그레이드 항목으로 별도 안내\n\n"
             + prompt
         )
 
     response = openai.ChatCompletion.create(
         model="gpt-3.5-turbo",
-        messages=[{"role": "system", "content": "당신은 IT 견적 전문가입니다."},
-                  {"role": "user", "content": prompt}],
+        messages=[{
+            "role": "system", 
+            "content": "당신은 IT 견적 전문가입니다. 예산이 제한적인 경우, 우선순위를 고려하여 실현 가능한 최소 범위의 견적을 제시해야 합니다."
+        }, {
+            "role": "user", 
+            "content": prompt
+        }],
         temperature=0.7,
         max_tokens=1400
     )
@@ -465,7 +477,7 @@ async def kakao_webhook(request: Request, background_tasks: BackgroundTasks):
                 "template": {
                     "outputs": [{
                         "simpleText": {
-                            "text": "죄송합니다. 저는 포트폴리오 확인과 견적 상담만 도와드릴 수 있어요. 😅\n\n다음과 같은 내용을 문의해주세요:\n- 프로젝트 견적 문의\n- 포트폴리오 확인\n- 개발 비용 상담"
+                            "text": "죄송합니다. 저는 팀 소개 및 포트폴리오 확인과 견적 상담만 도와드릴 수 있어요. 😅\n\n다음과 같은 내용을 문의해주세요:\n- 프로젝트 견적 문의\n- 포트폴리오 확인\n- 개발 비용 상담"
                         }
                     }],
                     "quickReplies": [{
