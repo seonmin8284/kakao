@@ -372,15 +372,19 @@ def call_gpt_full_estimate(user_input: str, topic: str, output: str, expected_bu
     )
     return response.choices[0].message.content
 
-def call_gpt_shrunk_only(full_prompt: str) -> str:
-    """축소 제안만 GPT에 요청"""
-    prompt = "🛠 아래는 사용자가 요청한 서비스 범위입니다. 예산을 초과하는 경우 최소 기능 중심의 '🔄 축소 제안'만 작성해주세요.\n\n"
+def call_gpt_shrunk_only(full_prompt: str, expected_budget: str = "") -> str:
+    """축소 제안만 GPT에 요청 (예산 이하로 제한)"""
+    prompt = "🛠 아래는 사용자가 요청한 서비스 범위입니다. 사용자가 입력한 예상 예산을 초과하지 않도록 최소 기능 중심의 '🔄 축소 제안'만 작성해주세요.\n\n"
+    
+    if expected_budget:
+        prompt += f"❗️예산을 반드시 지켜주세요: 최대 {expected_budget} 이하로 작성되어야 합니다.\n\n"
+    
     prompt += full_prompt
     prompt += "\n\n🔄 축소 제안:\n[카테고리별 축소 견적 형식으로 작성해 주세요.]"
 
     response = openai.ChatCompletion.create(
         model="gpt-3.5-turbo",
-        messages=[{"role": "system", "content": "당신은 IT 견적 전문가입니다."},
+        messages=[{"role": "system", "content": "당신은 IT 견적 전문가이며, 반드시 사용자의 예산 이하로 견적을 작성해야 합니다."},
                   {"role": "user", "content": prompt}],
         temperature=0.7,
         max_tokens=800
@@ -558,7 +562,7 @@ async def kakao_webhook(request: Request, background_tasks: BackgroundTasks):
         # 모든 슬롯이 채워진 경우에만 GPT 요청 처리
         if user_state["주제"] != "" and user_state["산출물"] != "" and user_state["기간"] != "" and user_state["예상_견적"] != "":
             user_input_parts = [
-                f"🧠 주제: {user_state['주제']}",
+                f"�� 주제: {user_state['주제']}",
                 f"🧾 산출물: {user_state['산출물']}",
                 f"🕒 기간: {user_state['기간']}",
                 f"💰 예산: {user_state['예상_견적']}"
@@ -654,7 +658,7 @@ async def get_shrunk_result(user_id: str):
         shrunk_only_text = SHRUNK_RESPONSES[user_id]
     else:
         full_prompt = build_prompt_multicategory(user_input, SERVICE_CATEGORIES, infer_all_categories(topic, output), budget, topic, period)
-        shrunk_only_text = call_gpt_shrunk_only(full_prompt)
+        shrunk_only_text = call_gpt_shrunk_only(full_prompt, expected_budget=budget)
         SHRUNK_RESPONSES[user_id] = shrunk_only_text  # 캐싱
 
     return {
