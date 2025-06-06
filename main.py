@@ -344,7 +344,9 @@ def build_prompt_multicategory(user_input: str, service_categories: dict, catego
     prompt += f"- 기간: {period}\n"
     prompt += f"- 예상 예산: {expected_budget}\n\n"
     
-    prompt += f"💡 사용자가 요청한 주요 서비스 범주는 `{', '.join(categories)}`입니다.\n\n"
+    # 중복 제거하면서 순서 유지
+    unique_categories = list(dict.fromkeys(categories))
+    prompt += f"💡 사용자가 요청한 주요 서비스 범주는 `{', '.join(unique_categories)}`입니다.\n\n"
     
     prompt += "🧾 각 카테고리에 대해 빠짐없이 견적을 제시해 주세요. 일부 항목 누락 없이 전체 범위를 고려해 주세요.\n"
     prompt += "⚠️ 각 카테고리는 독립된 프로젝트 단위로 보고, 개별 견적을 제시해 주세요.\n"
@@ -352,7 +354,8 @@ def build_prompt_multicategory(user_input: str, service_categories: dict, catego
     prompt += "\n💡 각 카테고리별 비용 총합(소계)을 마지막 줄에 `💰 소계: ...원` 형식으로 표시해 주세요.\n\n"
     prompt += "우리 회사는 다음과 같은 서비스 카테고리를 제공합니다:\n"
 
-    for category in categories:
+    # 중복 제거된 카테고리로 순회
+    for category in unique_categories:
         if category not in service_categories:
             continue
         prompt += f"\n📂 {category.replace('_', ' ')}\n"
