@@ -3,7 +3,7 @@ from fastapi.responses import JSONResponse
 import openai
 from dotenv import load_dotenv
 import os
-from typing import Dict, Any
+from typing import Dict, Any, List
 import uuid
 from difflib import get_close_matches
 import uvicorn
@@ -122,13 +122,23 @@ SERVICE_CATEGORIES = {
             "features": ["도메인 연동", "서버 배포", "초기 오류 대응 및 유지보수 가이드 제공"],
             "cost": 1000000
         }
+    },
+    "디지털_이미지_툴": {
+        "기획": {
+            "features": ["사용자 기능 정의", "툴 아키텍처 설계"],
+            "cost": 800000
+        },
+        "툴_개발": {
+            "features": ["이미지 업로드/편집/저장", "필터 적용 기능", "내보내기 기능"],
+            "cost": 2000000
+        }
     }
 }
 
 # 산출물 관련 키워드
 SANCHUL_ENTRIES = [
     "웹", "웹사이트", "챗봇", "플랫폼", "ETL", "시스템", "앱", "사이트", "MVP", "UI", "대시보드",
-    "API", "관리자 페이지", "리포트", "보고서", "자동화", "안드로이드", "IOS", "웹앱"
+    "API", "관리자 페이지", "리포트", "보고서", "자동화", "안드로이드", "IOS", "웹앱", "프로그램","윈도우", "맥"
 ]
 
 SANCHUL_SYNONYMS = [kw.lower() for kw in SANCHUL_ENTRIES]  # 소문자 비교용 리스트
@@ -204,18 +214,53 @@ def infer_primary_category(topic: str, output: str) -> str:
     # 기본값은 웹 플랫폼
     return "웹_플랫폼"
 
-def build_prompt(user_input: str, service_categories: Dict[str, Any], topic: str = "", output: str = "") -> str:
-    """사용자 입력과 서비스 카테고리를 기반으로 GPT 프롬프트를 생성합니다."""
-    # 주요 서비스 카테고리 추론
-    primary_hint = infer_primary_category(topic, output)
-    
+def infer_all_categories(topic: str, output: str) -> List[str]:
+    """여러 산출물에 기반하여 적합한 서비스 카테고리 목록 추론"""
+    topic = topic.lower()
+    output = output.lower()
+    categories = set()
+
+    # 웹/앱 관련
+    if any(kw in output for kw in ["앱", "웹", "사이트", "플랫폼"]):
+        categories.add("웹_플랫폼")
+
+    # 챗봇 관련
+    if any(kw in output for kw in ["챗봇", "대화", "AI"]):
+        categories.add("AI_챗봇")
+
+    # 시각화/데이터 분석
+    if any(kw in output for kw in ["분석", "대시보드", "리포트"]):
+        categories.add("시각화_대시보드")
+
+    # 이미지 툴 (향후 필요시 SERVICE_CATEGORIES에 정의 필요)
+    if any(kw in output for kw in ["디자인", "이미지", "프로그램"]):
+        categories.add("디지털_이미지_툴")
+
+    # SNS 마케팅 운영 (향후 필요시 SERVICE_CATEGORIES에 정의 필요)
+    if any(kw in output for kw in ["틱톡", "유튜브", "페이스북", "인스타"]):
+        categories.add("SNS_운영")
+
+    # 최소 1개 이상의 카테고리 보장
+    if not categories:
+        categories.add("웹_플랫폼")  # 기본값
+
+    return list(categories)
+
+def build_prompt_multicategory(user_input: str, service_categories: dict, categories: List[str], expected_budget: str = "") -> str:
     prompt = f"사용자의 요청:\n\"{user_input}\"\n\n"
-    prompt += f"💡 사용자가 원하는 주요 서비스는 `{primary_hint}`일 가능성이 높습니다.\n\n"
+    prompt += f"💡 사용자가 요청한 주요 서비스 범주는 `{', '.join(categories)}`입니다.\n\n"
+    
+    if expected_budget:
+        prompt += f"\n⚠️ 유의사항: 사용자의 예상 예산은 약 {expected_budget}입니다. "
+        prompt += "총 견적이 이 예산의 1.5배를 초과할 경우, 반드시 최소 기능만 포함한 축소 버전을 함께 제안해 주세요.\n"
+    
     prompt += "우리 회사는 다음과 같은 서비스 카테고리를 제공합니다:\n"
 
-    for category, steps in service_categories.items():
+    for category in categories:
+        if category not in service_categories:
+            continue
         prompt += f"\n📂 {category.replace('_', ' ')}\n"
-        for step, content in steps.items():
+        for step, content in service_categories[category].items():
             if isinstance(content, dict) and "features" in content:
                 cost = content.get("cost", 0)
                 features = " / ".join(content["features"])
@@ -233,13 +278,14 @@ def build_prompt(user_input: str, service_categories: Dict[str, Any], topic: str
     prompt += "3. 예상 기간: 전체 프로젝트 소요 기간\n"
     prompt += "4. 총 견적: 모든 단계의 비용 합계\n"
     prompt += "5. 추가 고려사항: 선택적으로 추가할 수 있는 기능이나 대안\n"
-    
     return prompt
 
-def call_gpt_for_estimate(user_input: str, topic: str = "", output: str = "") -> str:
+def call_gpt_for_estimate(user_input: str, topic: str = "", output: str = "", expected_budget: str = "") -> str:
     """GPT API를 호출하여 견적 응답을 생성합니다."""
     try:
-        prompt = build_prompt(user_input, SERVICE_CATEGORIES, topic, output)
+        # 다중 카테고리 추론
+        categories = infer_all_categories(topic, output)
+        prompt = build_prompt_multicategory(user_input, SERVICE_CATEGORIES, categories, expected_budget=expected_budget)
         
         response = openai.ChatCompletion.create(
             model="gpt-3.5-turbo",
@@ -258,10 +304,10 @@ def call_gpt_for_estimate(user_input: str, topic: str = "", output: str = "") ->
         return f"⚠️ 죄송합니다. 견적 산출 중 오류가 발생했습니다.\n잠시 후 다시 시도해주세요.\n\n오류 내용: {str(e)}"
 
 # 비동기 GPT 요청 처리
-async def process_gpt(user_id: str, user_input: str, topic: str = "", output: str = ""):
+async def process_gpt(user_id: str, user_input: str, topic: str = "", output: str = "", expected_budget: str = ""):
     USER_INPUTS[user_id] = user_input
     GPT_RESPONSES[user_id] = "⏳ 요청을 처리 중입니다. 잠시만 기다려주세요..."
-    GPT_RESPONSES[user_id] = call_gpt_for_estimate(user_input, topic, output)
+    GPT_RESPONSES[user_id] = call_gpt_for_estimate(user_input, topic, output, expected_budget)
 
 @app.post("/kakao/webhook")
 async def kakao_webhook(request: Request, background_tasks: BackgroundTasks):
@@ -294,7 +340,7 @@ async def kakao_webhook(request: Request, background_tasks: BackgroundTasks):
         
         # 슬롯 필링 중인지 여부 확인
         in_slot_filling = user_id in USER_SLOT_STATE and any(
-            USER_SLOT_STATE[user_id].get(slot, "") == "" for slot in ["주제", "산출물", "기간"]
+            USER_SLOT_STATE[user_id].get(slot, "") == "" for slot in ["주제", "산출물", "기간", "예상_견적"]
         )
         
         # 처리 가능 여부 확인 → 슬롯 필링 중이면 검사 건너뜀
@@ -317,7 +363,7 @@ async def kakao_webhook(request: Request, background_tasks: BackgroundTasks):
     
         # 기존 상태 없으면 초기화
         if user_id not in USER_SLOT_STATE:
-            USER_SLOT_STATE[user_id] = {"주제": "", "산출물": "", "기간": "", "retry_count": 0}
+            USER_SLOT_STATE[user_id] = {"주제": "", "산출물": "", "기간": "", "예상_견적": "", "retry_count": 0}
             
         user_state = USER_SLOT_STATE[user_id]
         
@@ -368,7 +414,7 @@ async def kakao_webhook(request: Request, background_tasks: BackgroundTasks):
                         }
                     })
         
-        # 4. 기간 입력이 없으면 요청
+        # 기간 입력이 없으면 요청
         if user_state["기간"] == "":
             if is_valid_period(utterance):
                 user_state["기간"] = utterance
@@ -383,23 +429,56 @@ async def kakao_webhook(request: Request, background_tasks: BackgroundTasks):
                         }]
                     }
                 })
+
+        # 예상 견적 슬롯 추가
+        if "예상_견적" not in user_state:
+            user_state["예상_견적"] = ""
+
+        # 견적 결과 응답에 포함되었을 경우 추출해서 저장
+        if user_state["예상_견적"] == "" and utterance.startswith("견적 결과 확인:"):
+            gpt_result = GPT_RESPONSES.get(user_id, "")
+            if "총 견적" in gpt_result:
+                lines = gpt_result.splitlines()
+                for line in lines:
+                    if "총 견적" in line:
+                        user_state["예상_견적"] = line.strip()
+                        break
+
+        # 견적이 비어 있으면 다시 물어보기
+        if user_state["예상_견적"] == "":
+            return JSONResponse(content={
+                "version": "2.0",
+                "template": {
+                    "outputs": [{
+                        "simpleText": {
+                            "text": "💰 대략 어느 정도의 예산을 생각하고 계신가요? (예: 100만원, 2000만원 등)"
+                        }
+                    }]
+                }
+            })
         
         # 상세 파라미터가 있는 경우 우선 적용
-        for slot in ["주제", "산출물", "기간"]:
+        for slot in ["주제", "산출물", "기간", "예상_견적"]:
             if slot in detail_params and detail_params[slot].get("origin"):
                 user_state[slot] = detail_params[slot]["origin"]
             elif slot in params:
                 user_state[slot] = params.get(slot) or params.get(f"${slot}", "")
         
         # 모든 슬롯이 채워진 경우에만 GPT 요청 처리
-        if user_state["주제"] != "" and user_state["산출물"] != "" and user_state["기간"] != "":
-            # 중복 제거를 위해 리스트로 변환 후 다시 문자열로
-            user_input_parts = [user_state['주제'], user_state['산출물'], user_state['기간']]
-            user_input_parts = list(dict.fromkeys(user_input_parts))  # 중복 제거
+        if user_state["주제"] != "" and user_state["산출물"] != "" and user_state["기간"] != "" and user_state["예상_견적"] != "":
+            user_input_parts = [user_state['주제'], user_state['산출물'], user_state['기간'], user_state['예상_견적']]
+            user_input_parts = list(dict.fromkeys(user_input_parts))
             user_input = ", ".join(user_input_parts)
             
             USER_INPUTS[user_id] = user_input
-            background_tasks.add_task(process_gpt, user_id, user_input, user_state["주제"], user_state["산출물"])
+            background_tasks.add_task(
+                process_gpt,
+                user_id,
+                user_input,
+                user_state["주제"],
+                user_state["산출물"],
+                user_state["예상_견적"]
+            )
             
             return JSONResponse(content={
                 "version": "2.0",
@@ -416,7 +495,7 @@ async def kakao_webhook(request: Request, background_tasks: BackgroundTasks):
                     }]
                 }
             })
-        
+            
     except Exception as e:
         return JSONResponse(content={
             "version": "2.0",
