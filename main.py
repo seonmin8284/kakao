@@ -325,27 +325,13 @@ def build_prompt_multicategory(user_input: str, service_categories: dict, catego
     
     # 예시 형식 추가
     prompt += """📂 [카테고리명]
-- 필요한 단계: [단계별 주요 기능 나열]
+- 필요한 단계: [금액]원
 - 예상 기간: [기간]
-- 비용: [금액]원
 
 이런 형식으로 각 카테고리별 견적을 제시한 후,
 
 💰 총 합계: [전체 금액]원
-
-형식으로 마무리해 주세요.
-
-만약 총 합계가 예산을 초과하는 경우:
-
-🔄 축소 제안:
-📂 [카테고리명]
-- 필요한 단계: [최소 필수 기능만 나열]
-- 예상 기간: [기간]
-- 비용: [조정된 금액]원
-...
-💰 축소안 총 합계: [조정된 전체 금액]원
-
-형식으로 축소안도 함께 제시해 주세요."""
+"""
 
     return prompt
 
@@ -626,12 +612,14 @@ async def get_result(user_id: str):
     """결과 조회 엔드포인트"""
     response_text = GPT_RESPONSES.get(user_id, "❌ 존재하지 않는 요청 ID이거나 아직 처리 중입니다.")
     user_input = USER_INPUTS.get(user_id, "입력 정보가 없습니다.")
+    
     if user_id in USER_INPUTS:
         quick_replies.append({
             "messageText": f"축소 견적 확인:{user_id}",
             "action": "message",
             "label": "축소 견적만 보기"
         })
+    
     quick_replies = [{
         "messageText": "새로운 견적 문의",
         "action": "message",
