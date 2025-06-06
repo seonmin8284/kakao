@@ -353,64 +353,48 @@ def build_prompt_multicategory(user_input: str, service_categories: dict, catego
 
     return prompt
 
-def call_gpt_for_estimate(user_input: str, topic: str = "", output: str = "", expected_budget: str = "", period: str = "") -> str:
-    """GPT API를 호출하여 견적 응답을 생성합니다."""
-    try:
-        # 산출물 기반으로 정확한 카테고리 추론
-        outputs = [out.strip() for out in output.split(',')]  # 쉼표로 구분된 산출물 목록
-        all_categories = set()
-        
-        # 각 산출물에 대해 카테고리 추론
-        for single_output in outputs:
-            categories = infer_all_categories(topic, single_output)
-            all_categories.update(categories)
-        
-        # 중복 제거 및 리스트 변환
-        categories = list(all_categories)
-        
-        # 카테고리가 하나도 없으면 기본값 추가
-        if not categories:
-            categories = ["웹_플랫폼"]
-        
-        # 구조화된 입력 구성
-        user_input_parts = [
-            f"🧠 주제: {topic}",
-            f"🧾 산출물: {output}",
-            f"🕒 기간: {period}",
-            f"💰 예산: {expected_budget}"
-        ]
-        structured_input = "\n".join(user_input_parts)
-        
-        prompt = build_prompt_multicategory(
-            structured_input,
-            SERVICE_CATEGORIES,
-            categories,
-            expected_budget=expected_budget,
-            topic=topic,
-            period=period
-        )
-        
-        response = openai.ChatCompletion.create(
-            model="gpt-3.5-turbo",
-            messages=[
-                {
-                    "role": "system", 
-                    "content": "당신은 IT 프로젝트 견적 전문가입니다. 친절하고 전문적으로 상담해주세요. 이모지를 적절히 활용하여 답변하되, 형식은 반드시 지정된 대로 작성해주세요."
-                },
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.7,
-            max_tokens=1000
-        )
-        return response.choices[0].message.content
-    except Exception as e:
-        return f"⚠️ 죄송합니다. 견적 산출 중 오류가 발생했습니다.\n잠시 후 다시 시도해주세요.\n\n오류 내용: {str(e)}"
+def call_gpt_full_estimate(user_input: str, topic: str, output: str, expected_budget: str, period: str) -> str:
+    """전체 견적만 요청 (🔄 축소 제안 제외)"""
+    prompt = build_prompt_multicategory(
+        user_input, SERVICE_CATEGORIES,
+        infer_all_categories(topic, output),
+        expected_budget, topic, period
+    )
+    # 프롬프트에서 축소 제안 안내 삭제
+    prompt = re.sub(r"\n*만약 총 합계.*?축소안도 함께 제시해 주세요\.", "", prompt, flags=re.DOTALL)
 
-# 비동기 GPT 요청 처리
+    response = openai.ChatCompletion.create(
+        model="gpt-3.5-turbo",
+        messages=[{"role": "system", "content": "당신은 IT 견적 전문가입니다."},
+                  {"role": "user", "content": prompt}],
+        temperature=0.7,
+        max_tokens=1200
+    )
+    return response.choices[0].message.content
+
+def call_gpt_shrunk_only(full_prompt: str) -> str:
+    """축소 제안만 GPT에 요청"""
+    prompt = "🛠 아래는 사용자가 요청한 서비스 범위입니다. 예산을 초과하는 경우 최소 기능 중심의 '🔄 축소 제안'만 작성해주세요.\n\n"
+    prompt += full_prompt
+    prompt += "\n\n🔄 축소 제안:\n[카테고리별 축소 견적 형식으로 작성해 주세요.]"
+
+    response = openai.ChatCompletion.create(
+        model="gpt-3.5-turbo",
+        messages=[{"role": "system", "content": "당신은 IT 견적 전문가입니다."},
+                  {"role": "user", "content": prompt}],
+        temperature=0.7,
+        max_tokens=800
+    )
+    return response.choices[0].message.content.strip()
+
+# process_gpt 함수 수정
 async def process_gpt(user_id: str, user_input: str, topic: str = "", output: str = "", expected_budget: str = "", period: str = ""):
     USER_INPUTS[user_id] = user_input
     GPT_RESPONSES[user_id] = "⏳ 요청을 처리 중입니다. 잠시만 기다려주세요..."
-    GPT_RESPONSES[user_id] = call_gpt_for_estimate(user_input, topic, output, expected_budget, period)
+    
+    # 전체 견적만 먼저 생성
+    full_response = call_gpt_full_estimate(user_input, topic, output, expected_budget, period)
+    GPT_RESPONSES[user_id] = full_response
 
 @app.post("/kakao/webhook")
 async def kakao_webhook(request: Request, background_tasks: BackgroundTasks):
@@ -626,8 +610,19 @@ async def get_result(user_id: str):
     response_text = GPT_RESPONSES.get(user_id, "❌ 존재하지 않는 요청 ID이거나 아직 처리 중입니다.")
     user_input = USER_INPUTS.get(user_id, "입력 정보가 없습니다.")
     
-    # 결과 조회 후 상태 초기화 (선택사항)
-    USER_SLOT_STATE.pop(user_id, None)
+    quick_replies = [{
+        "messageText": "새로운 견적 문의",
+        "action": "message",
+        "label": "새로운 견적 문의"
+    }]
+
+    # 입력 정보가 있으면 축소 견적 버튼 추가
+    if user_id in USER_INPUTS:
+        quick_replies.append({
+            "messageText": f"축소 견적 확인:{user_id}",
+            "action": "message",
+            "label": "축소 견적만 보기"
+        })
     
     return {
         "version": "2.0",
@@ -637,10 +632,39 @@ async def get_result(user_id: str):
                     "text": f"{response_text}\n\n🗂️ 입력 정보:\n{user_input}"
                 }
             }],
+            "quickReplies": quick_replies
+        }
+    }
+
+@app.get("/shrunk_result/{user_id}")
+async def get_shrunk_result(user_id: str):
+    """축소 견적은 버튼 눌렀을 때 GPT 다시 호출"""
+    if user_id not in USER_INPUTS:
+        return {"version": "2.0", "template": {"outputs": [{"simpleText": {"text": "❌ 입력 정보가 없습니다."}}]}}
+
+    user_input = USER_INPUTS[user_id]
+    # 기존 full prompt 재활용
+    topic = USER_SLOT_STATE.get(user_id, {}).get("주제", "")
+    output = USER_SLOT_STATE.get(user_id, {}).get("산출물", "")
+    budget = USER_SLOT_STATE.get(user_id, {}).get("예상_견적", "")
+    period = USER_SLOT_STATE.get(user_id, {}).get("기간", "")
+
+    # 캐시된 축소 견적이 있으면 재사용
+    if user_id in SHRUNK_RESPONSES and SHRUNK_RESPONSES[user_id]:
+        shrunk_only_text = SHRUNK_RESPONSES[user_id]
+    else:
+        full_prompt = build_prompt_multicategory(user_input, SERVICE_CATEGORIES, infer_all_categories(topic, output), budget, topic, period)
+        shrunk_only_text = call_gpt_shrunk_only(full_prompt)
+        SHRUNK_RESPONSES[user_id] = shrunk_only_text  # 캐싱
+
+    return {
+        "version": "2.0",
+        "template": {
+            "outputs": [{"simpleText": {"text": shrunk_only_text}}],
             "quickReplies": [{
-                "messageText": "새로운 견적 문의",
+                "messageText": f"견적 결과 확인:{user_id}",
                 "action": "message",
-                "label": "새로운 견적 문의"
+                "label": "전체 견적 보기"
             }]
         }
     }
