@@ -183,15 +183,33 @@ def is_valid_slot_answer(text: str) -> bool:
     invalid_keywords = ["없", "모르", "모름", "몰라", "글쎄", "무", "잘 몰라", "기억 안", "생각 안"]
     return not any(kw in lower for kw in invalid_keywords)
 
+def normalize_period(text: str) -> str:
+    """기간 입력을 표준 형식으로 정규화"""
+    if "개월" in text or "달" in text:
+        number = ''.join(filter(str.isdigit, text))
+        return f"{number}개월"
+    elif "주" in text:
+        number = ''.join(filter(str.isdigit, text))
+        return f"{number}주"
+    return text.strip()
+
+def normalize_budget(text: str) -> str:
+    """사용자가 입력한 금액 문자열을 숫자로 정규화"""
+    match = re.search(r"(\d{1,3}(?:,\d{3})*|\d+)", text.replace(',', ''))
+    if match:
+        amount = match.group(0)
+        return f"{int(amount):,}원"  # 예: 2000000 → '2,000,000원'
+    return ""
+
 def is_valid_period(text: str) -> bool:
-    """기간 입력의 유효성을 검사합니다."""
+    """기간 입력의 유효성을 검사하고 정규화를 시도합니다."""
     text = text.strip()
     if not is_valid_slot_answer(text):  # 기본 유효성 검사
         return False
-    # 숫자가 포함되어 있고, 단위 키워드가 있는지 확인
-    has_number = any(char.isdigit() for char in text)
-    has_unit = any(unit in text for unit in ["일", "개월", "달", "주", "년"])
-    return has_number and has_unit
+    
+    # 정규화 시도
+    normalized = normalize_period(text)
+    return any(unit in normalized for unit in ["개월", "주"])
 
 def infer_primary_category(topic: str, output: str) -> str:
     """사용자 입력을 기반으로 가장 적합한 서비스 카테고리를 추론합니다."""
@@ -255,6 +273,7 @@ def build_prompt_multicategory(user_input: str, service_categories: dict, catego
         prompt += f"\n⚠️ 유의사항: 사용자의 예상 예산은 약 {expected_budget}입니다. "
         prompt += "총 견적이 이 예산의 1.5배를 초과할 경우, 반드시 최소 기능만 포함한 축소 버전을 함께 제안해 주세요.\n"
     
+    prompt += "\n🧾 각 카테고리에 대해 빠짐없이 견적을 제시해 주세요. 일부 항목 누락 없이 전체 범위를 고려해 주세요.\n"
     prompt += "우리 회사는 다음과 같은 서비스 카테고리를 제공합니다:\n"
 
     for category in categories:
@@ -278,14 +297,27 @@ def build_prompt_multicategory(user_input: str, service_categories: dict, catego
     prompt += "2. 필요한 단계: 각 단계별 주요 기능과 비용\n"
     prompt += "3. 예상 기간: 전체 프로젝트 소요 기간\n"
     prompt += "4. 총 견적: 모든 단계의 비용 합계\n"
-    prompt += "5. 추가 고려사항: 선택적으로 추가할 수 있는 기능이나 대안\n"
     return prompt
 
 def call_gpt_for_estimate(user_input: str, topic: str = "", output: str = "", expected_budget: str = "") -> str:
     """GPT API를 호출하여 견적 응답을 생성합니다."""
     try:
-        # 다중 카테고리 추론
-        categories = infer_all_categories(topic, output)
+        # 산출물 기반으로 정확한 카테고리 추론
+        outputs = [out.strip() for out in output.split(',')]  # 쉼표로 구분된 산출물 목록
+        all_categories = set()
+        
+        # 각 산출물에 대해 카테고리 추론
+        for single_output in outputs:
+            categories = infer_all_categories(topic, single_output)
+            all_categories.update(categories)
+        
+        # 중복 제거 및 리스트 변환
+        categories = list(all_categories)
+        
+        # 카테고리가 하나도 없으면 기본값 추가
+        if not categories:
+            categories = ["웹_플랫폼"]
+        
         prompt = build_prompt_multicategory(user_input, SERVICE_CATEGORIES, categories, expected_budget=expected_budget)
         
         response = openai.ChatCompletion.create(
@@ -309,14 +341,6 @@ async def process_gpt(user_id: str, user_input: str, topic: str = "", output: st
     USER_INPUTS[user_id] = user_input
     GPT_RESPONSES[user_id] = "⏳ 요청을 처리 중입니다. 잠시만 기다려주세요..."
     GPT_RESPONSES[user_id] = call_gpt_for_estimate(user_input, topic, output, expected_budget)
-
-def normalize_budget(text: str) -> str:
-    """사용자가 입력한 금액 문자열을 숫자로 정규화"""
-    match = re.search(r"(\d{1,3}(?:,\d{3})*|\d+)", text.replace(',', ''))
-    if match:
-        amount = match.group(0)
-        return f"{int(amount):,}원"  # 예: 2000000 → '2,000,000원'
-    return ""
 
 @app.post("/kakao/webhook")
 async def kakao_webhook(request: Request, background_tasks: BackgroundTasks):
@@ -426,7 +450,7 @@ async def kakao_webhook(request: Request, background_tasks: BackgroundTasks):
         # 기간 입력이 없으면 요청
         if user_state["기간"] == "":
             if is_valid_period(utterance):
-                user_state["기간"] = utterance
+                user_state["기간"] = normalize_period(utterance)
             else:
                 return JSONResponse(content={
                     "version": "2.0",
