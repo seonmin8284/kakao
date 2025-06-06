@@ -265,8 +265,14 @@ def infer_all_categories(topic: str, output: str) -> List[str]:
 
     return list(categories)
 
-def build_prompt_multicategory(user_input: str, service_categories: dict, categories: List[str], expected_budget: str = "") -> str:
-    prompt = f"사용자의 요청:\n\"{user_input}\"\n\n"
+def build_prompt_multicategory(user_input: str, service_categories: dict, categories: List[str], expected_budget: str = "", topic: str = "", period: str = "") -> str:
+    # 구조화된 입력 정보 표시
+    prompt = "🧾 사용자가 입력한 정보:\n"
+    prompt += f"- 주제: {topic}\n"
+    prompt += f"- 산출물: {user_input}\n"
+    prompt += f"- 기간: {period}\n"
+    prompt += f"- 예상 예산: {expected_budget}\n\n"
+    
     prompt += f"💡 사용자가 요청한 주요 서비스 범주는 `{', '.join(categories)}`입니다.\n\n"
     
     if expected_budget:
@@ -299,7 +305,7 @@ def build_prompt_multicategory(user_input: str, service_categories: dict, catego
     prompt += "4. 총 견적: 모든 단계의 비용 합계\n"
     return prompt
 
-def call_gpt_for_estimate(user_input: str, topic: str = "", output: str = "", expected_budget: str = "") -> str:
+def call_gpt_for_estimate(user_input: str, topic: str = "", output: str = "", expected_budget: str = "", period: str = "") -> str:
     """GPT API를 호출하여 견적 응답을 생성합니다."""
     try:
         # 산출물 기반으로 정확한 카테고리 추론
@@ -318,7 +324,23 @@ def call_gpt_for_estimate(user_input: str, topic: str = "", output: str = "", ex
         if not categories:
             categories = ["웹_플랫폼"]
         
-        prompt = build_prompt_multicategory(user_input, SERVICE_CATEGORIES, categories, expected_budget=expected_budget)
+        # 구조화된 입력 구성
+        user_input_parts = [
+            f"🧠 주제: {topic}",
+            f"🧾 산출물: {output}",
+            f"🕒 기간: {period}",
+            f"💰 예산: {expected_budget}"
+        ]
+        structured_input = "\n".join(user_input_parts)
+        
+        prompt = build_prompt_multicategory(
+            structured_input,
+            SERVICE_CATEGORIES,
+            categories,
+            expected_budget=expected_budget,
+            topic=topic,
+            period=period
+        )
         
         response = openai.ChatCompletion.create(
             model="gpt-3.5-turbo",
@@ -337,10 +359,10 @@ def call_gpt_for_estimate(user_input: str, topic: str = "", output: str = "", ex
         return f"⚠️ 죄송합니다. 견적 산출 중 오류가 발생했습니다.\n잠시 후 다시 시도해주세요.\n\n오류 내용: {str(e)}"
 
 # 비동기 GPT 요청 처리
-async def process_gpt(user_id: str, user_input: str, topic: str = "", output: str = "", expected_budget: str = ""):
+async def process_gpt(user_id: str, user_input: str, topic: str = "", output: str = "", expected_budget: str = "", period: str = ""):
     USER_INPUTS[user_id] = user_input
     GPT_RESPONSES[user_id] = "⏳ 요청을 처리 중입니다. 잠시만 기다려주세요..."
-    GPT_RESPONSES[user_id] = call_gpt_for_estimate(user_input, topic, output, expected_budget)
+    GPT_RESPONSES[user_id] = call_gpt_for_estimate(user_input, topic, output, expected_budget, period)
 
 @app.post("/kakao/webhook")
 async def kakao_webhook(request: Request, background_tasks: BackgroundTasks):
@@ -503,9 +525,13 @@ async def kakao_webhook(request: Request, background_tasks: BackgroundTasks):
         
         # 모든 슬롯이 채워진 경우에만 GPT 요청 처리
         if user_state["주제"] != "" and user_state["산출물"] != "" and user_state["기간"] != "" and user_state["예상_견적"] != "":
-            user_input_parts = [user_state['주제'], user_state['산출물'], user_state['기간'], user_state['예상_견적']]
-            user_input_parts = list(dict.fromkeys(user_input_parts))
-            user_input = ", ".join(user_input_parts)
+            user_input_parts = [
+                f"🧠 주제: {user_state['주제']}",
+                f"🧾 산출물: {user_state['산출물']}",
+                f"🕒 기간: {user_state['기간']}",
+                f"💰 예산: {user_state['예상_견적']}"
+            ]
+            user_input = "\n".join(user_input_parts)
             
             USER_INPUTS[user_id] = user_input
             background_tasks.add_task(
@@ -514,7 +540,8 @@ async def kakao_webhook(request: Request, background_tasks: BackgroundTasks):
                 user_input,
                 user_state["주제"],
                 user_state["산출물"],
-                user_state["예상_견적"]
+                user_state["예상_견적"],
+                user_state["기간"]
             )
             
             return JSONResponse(content={
